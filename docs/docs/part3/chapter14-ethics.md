@@ -1,151 +1,505 @@
 ---
 sidebar_position: 4
 title: "Chapter 14. Doing the Right Thing"
-description: "Examine the ethical implications and responsibilities in data systems"
+description: "Examine the ethical implications and responsibilities when building data-intensive applications"
 ---
 
-Chapter 14. Doing the Right Thing
-Feeding AI systems on the world’s beauty, ugliness, and cruelty, but expecting it to reflect only the beauty is a fantasy.
-
-Vinay Uday Prabhu and Abeba Birhane, Large Datasets: A Pyrrhic Win for Computer Vision? (2020)
-
-In Chapter 1 we contrasted analytical and operational systems, compared the cloud to self-hosting, weighed up distributed and single-node systems, and discussed balancing the needs of your business with the needs of your users.
-
-In Chapter 2 we saw how to define several nonfunctional requirements such as performance, reliability, scalability, and maintainability.
-
-In Chapter 3 we explored a spectrum of data models, including the relational, document, and graph models, event sourcing, and DataFrames. We also looked at examples of various query languages, including SQL, Cypher, SPARQL, Datalog, and GraphQL.
-
-In Chapter 4 we discussed storage engines for OLTP (LSM-trees and B-trees), for analytics (column-oriented storage), and indexes for information retrieval (full-text and vector search).
-
-In Chapter 5 we examined different ways of encoding data objects as bytes, and how to support evolution as requirements change. We also compared several ways how data flows between processes: via databases, service calls, workflow engines, or event-driven architectures.
-
-In Chapter 6 we studied the trade-offs between single-leader, multi-leader, and leaderless replication. We also looked at consistency models such as read-after-write consistency, and sync engines that allow clients to work offline.
-
-In Chapter 7 we went into sharding, including strategies for rebalancing, request routing, and secondary indexing.
-
-In Chapter 8 we covered transactions: durability, how various isolation levels (read committed, snapshot isolation, and serializable) can be achieved, and how atomicity can be ensured in distributed transactions.
-
-In Chapter 9 we surveyed fundamental problems that occur in distributed systems (network faults and delays, clock errors, process pauses, crashes), and saw how they make it difficult to correctly implement even something seemingly simple like a lock.
-
-In Chapter 10 we went on a deep-dive into various forms of consensus and the consistency model (linearizability) it enables.
-
-In Chapter 11 we dug into batch processing, building up from simple chains of Unix tools to large-scale distributed batch processors using distributed filesystems or object stores.
-
-In Chapter 12 we generalized batch processing to stream processing, discussed the underlying message brokers, change data capture, fault tolerance, and processing patterns such as streaming joins.
-
-In Chapter 13 we explored a philosophy of streaming systems that allows disparate data systems to be integrated, systems to be evolved, and applications to be scaled more easily.
-
-Finally, in this last chapter, we took a step back and examined some ethical aspects of building data-intensive applications. We saw that although data can be used to do good, it can also do significant harm: making decisions that seriously affect people’s lives and are difficult to appeal against, leading to discrimination and exploitation, normalizing surveillance, and exposing intimate information. We also run the risk of data breaches, and we may find that a well-intentioned use of data has unintended consequences.
-
-As software and data are having such a large impact on the world, we as engineers must remember that we carry a responsibility to work toward the kind of world that we want to live in: a world that treats people with humanity and respect. Let’s work together towards that goal.
-
-Footnotes
-References
- David Schmudde. What If Data Is a Bad Idea?. schmud.de, August 2024. Archived at perma.cc/ZXU5-XMCT
-
- ACM Code of Ethics and Professional Conduct. Association for Computing Machinery, acm.org, 2018. Archived at perma.cc/SEA8-CMB8
-
- Igor Perisic. Making Hard Choices: The Quest for Ethics in Machine Learning. linkedin.com, November 2016. Archived at perma.cc/DGF8-KNT7
-
- John Naughton. Algorithm Writers Need a Code of Conduct. theguardian.com, December 2015. Archived at perma.cc/TBG2-3NG6
-
- Ben Green. “Good” isn’t good enough. At NeurIPS Joint Workshop on AI for Social Good, December 2019. Archived at perma.cc/H4LN-7VY3
-
- Deborah G. Johnson and Mario Verdicchio. Ethical AI is Not about AI. Communications of the ACM, volume 66, issue 2, pages 32–34, January 2023. doi:10.1145/3576932
-
- Marc Steen. Ethics as a Participatory and Iterative Process. Communications of the ACM, volume 66, issue 5, pages 27–29, April 2023. doi:10.1145/3550069
-
- Logan Kugler. What Happens When Big Data Blunders? Communications of the ACM, volume 59, issue 6, pages 15–16, June 2016. doi:10.1145/2911975
-
- Miri Zilka. Algorithms and the criminal justice system: promises and challenges in deployment and research. At University of Cambridge Security Seminar Series, March 2023.
-
- Bill Davidow. Welcome to Algorithmic Prison. theatlantic.com, February 2014. Archived at archive.org
-
- Don Peck. They’re Watching You at Work. theatlantic.com, December 2013. Archived at perma.cc/YR9T-6M38
-
- Leigh Alexander. Is an Algorithm Any Less Racist Than a Human? theguardian.com, August 2016. Archived at perma.cc/XP93-DSVX
-
- Jesse Emspak. How a Machine Learns Prejudice. scientificamerican.com, December 2016. perma.cc/R3L5-55E6
-
- Rohit Chopra, Kristen Clarke, Charlotte A. Burrows, and Lina M. Khan. Joint Statement on Enforcement Efforts Against Discrimination and Bias in Automated Systems. ftc.gov, April 2023. Archived at perma.cc/YY4Y-RCCA
-
- Maciej Cegłowski. The Moral Economy of Tech. idlewords.com, June 2016. Archived at perma.cc/L8XV-BKTD
-
- Greg Nichols. Artificial Intelligence in healthcare is racist. zdnet.com, November 2020. Archived at perma.cc/3MKW-YKRS
-
- Cathy O’Neil. Weapons of Math Destruction: How Big Data Increases Inequality and Threatens Democracy. Crown Publishing, 2016. ISBN: 978-0-553-41881-1
-
- Julia Angwin. Make Algorithms Accountable. nytimes.com, August 2016. Archived at archive.org
-
- Bryce Goodman and Seth Flaxman. European Union Regulations on Algorithmic Decision-Making and a ‘Right to Explanation’. At ICML Workshop on Human Interpretability in Machine Learning, June 2016. Archived at arxiv.org/abs/1606.08813
-
- A Review of the Data Broker Industry: Collection, Use, and Sale of Consumer Data for Marketing Purposes. Staff Report, United States Senate Committee on Commerce, Science, and Transportation, commerce.senate.gov, December 2013. Archived at perma.cc/32NV-YWLQ
-
- Stephanie Assad, Robert Clark, Daniel Ershov, and Lei Xu. Algorithmic Pricing and Competition: Empirical Evidence from the German Retail Gasoline Market. Journal of Political Economy, volume 132, issue 3, pages 723-771, March 2024. doi:10.1086/726906
-
- Donella H. Meadows and Diana Wright. Thinking in Systems: A Primer. Chelsea Green Publishing, 2008. ISBN: 978-1-603-58055-7
-
- Daniel J. Bernstein. Listening to a “big data”/“data science” talk. Mentally translating “data” to “surveillance”: “...everything starts with surveillance...” x.com, May 2015. Archived at perma.cc/EY3D-WBBJ
-
- Marc Andreessen. Why Software Is Eating the World. a16z.com, August 2011. Archived at perma.cc/3DCC-W3G6
-
- J. M. Porup. ‘Internet of Things’ Security Is Hilariously Broken and Getting Worse. arstechnica.com, January 2016. Archived at archive.org
-
- Bruce Schneier. Data and Goliath: The Hidden Battles to Collect Your Data and Control Your World. W. W. Norton, 2015. ISBN: 978-0-393-35217-7
-
- The Grugq. Nothing to Hide. grugq.tumblr.com, April 2016. Archived at perma.cc/BL95-8W5M
-
- Federal Trade Commission. FTC Takes Action Against General Motors for Sharing Drivers’ Precise Location and Driving Behavior Data Without Consent. ftc.gov, January 2025. Archived at perma.cc/3XGV-3HRD
-
- Tony Beltramelli. Deep-Spying: Spying Using Smartwatch and Deep Learning. Masters Thesis, IT University of Copenhagen, December 2015. Archived at arxiv.org/abs/1512.05616
-
- Shoshana Zuboff. Big Other: Surveillance Capitalism and the Prospects of an Information Civilization. Journal of Information Technology, volume 30, issue 1, pages 75–89, April 2015. doi:10.1057/jit.2015.5
-
- Michiel Rhoen. Beyond Consent: Improving Data Protection Through Consumer Protection Law. Internet Policy Review, volume 5, issue 1, March 2016. doi:10.14763/2016.1.404
-
- Regulation (EU) 2016/679 of the European Parliament and of the Council of 27 April 2016. Official Journal of the European Union, L 119/1, May 2016.
-
- UK Information Commissioner’s Office. What is the ‘legitimate interests’ basis? ico.org.uk. Archived at perma.cc/W8XR-F7ML
-
- Tristan Harris. How a handful of tech companies control billions of minds every day. At TED2017, April 2017.
-
- Carina C. Zona. Consequences of an Insightful Algorithm. At GOTO Berlin, November 2016.
-
- Imanol Arrieta Ibarra, Leonard Goff, Diego Jiménez Hernández, Jaron Lanier, and E. Glen Weyl. Should We Treat Data as Labor? Moving Beyond ‘Free’. American Economic Association Papers Proceedings, volume 1, issue 1, December 2017.
-
- Bruce Schneier. Data Is a Toxic Asset, So Why Not Throw It Out? schneier.com, March 2016. Archived at perma.cc/4GZH-WR3D
-
- Cory Scott. Data is not toxic - which implies no benefit - but rather hazardous material, where we must balance need vs. want. x.com, March 2016. Archived at perma.cc/CLV7-JF2E
-
- Mark Pesce. Data is the new uranium – incredibly powerful and amazingly dangerous. theregister.com, November 2024. Archived at perma.cc/NV8B-GYGV
-
- Bruce Schneier. Mission Creep: When Everything Is Terrorism. schneier.com, July 2013. Archived at perma.cc/QB2C-5RCE
-
- Lena Ulbricht and Maximilian von Grafenstein. Big Data: Big Power Shifts? Internet Policy Review, volume 5, issue 1, March 2016. doi:10.14763/2016.1.406
-
- Ellen P. Goodman and Julia Powles. Facebook and Google: Most Powerful and Secretive Empires We’ve Ever Known. theguardian.com, September 2016. Archived at perma.cc/8UJA-43G6
-
- Judy Estrin and Sam Gill. The World Is Choking on Digital Pollution. washingtonmonthly.com, January 2019. Archived at perma.cc/3VHF-C6UC
-
- A. Michael Froomkin. Regulating Mass Surveillance as Privacy Pollution: Learning from Environmental Impact Statements. University of Illinois Law Review, volume 2015, issue 5, August 2015. Archived at perma.cc/24ZL-VK2T
-
- Pengyuan Wang, Li Jiang, and Jian Yang. The Early Impact of GDPR Compliance on Display Advertising: The Case of an Ad Publisher. Journal of Marketing Research, volume 61, issue 1, April 2023. doi:10.1177/00222437231171848
-
- Johnny Ryan. Don’t be fooled by Meta’s fine for data breaches. The Economist, May 2023. Archived at perma.cc/VCR6-55HR
-
- Jessica Leber. Your Data Footprint Is Affecting Your Life in Ways You Can’t Even Imagine. fastcompany.com, March 2016. Archived at archive.org
-
- Maciej Cegłowski. Haunted by Data. idlewords.com, October 2015. Archived at archive.org
-
- Sam Thielman. You Are Not What You Read: Librarians Purge User Data to Protect Privacy. theguardian.com, January 2016. Archived at archive.org
-
- Jez Humble. It’s a cliché that people get into tech to “change the world”. So then, you have to actually consider what the impact of your work is on the world. The idea that you can or should exclude societal and political discussions in tech is idiotic. It means you’re not doing your job. x.com, April 2021. Archived at perma.cc/3NYS-MHLC
-
-search
-Previous chapter 13. A Philosophy of Streaming Systems
-Next chapter
-Glossary
+# Chapter 14. Doing the Right Thing
+
+> Feeding AI systems on the world's beauty, ugliness, and cruelty, but expecting it to reflect only the beauty is a fantasy.
+>
+> _Vinay Uday Prabhu and Abeba Birhane, Large Datasets: A Pyrrhic Win for Computer Vision? (2020)_
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+   - 1.1. [Data is About People](#11-data-is-about-people)
+   - 1.2. [Technology is Not Neutral](#12-technology-is-not-neutral)
+2. [Predictive Analytics](#2-predictive-analytics)
+   - 2.1. [Algorithmic Prison](#21-algorithmic-prison)
+   - 2.2. [Bias and Discrimination](#22-bias-and-discrimination)
+   - 2.3. [Responsibility and Accountability](#23-responsibility-and-accountability)
+3. [Feedback Loops](#3-feedback-loops)
+   - 3.1. [Self-Reinforcing Problems](#31-self-reinforcing-problems)
+   - 3.2. [Systems Thinking](#32-systems-thinking)
+4. [Privacy and Surveillance](#4-privacy-and-surveillance)
+   - 4.1. [The Surveillance Thought Experiment](#41-the-surveillance-thought-experiment)
+   - 4.2. [Consent and Freedom of Choice](#42-consent-and-freedom-of-choice)
+   - 4.3. [What Privacy Really Means](#43-what-privacy-really-means)
+5. [Data as Power](#5-data-as-power)
+   - 5.1. [Data as a Toxic Asset](#51-data-as-a-toxic-asset)
+   - 5.2. [Lessons from the Industrial Revolution](#52-lessons-from-the-industrial-revolution)
+6. [What We Can Do](#6-what-we-can-do)
+   - 6.1. [Legislation and Self-Regulation](#61-legislation-and-self-regulation)
+   - 6.2. [A Culture Shift](#62-a-culture-shift)
+7. [Summary: The Whole Book](#7-summary-the-whole-book)
 
 ---
 
-**Previous:** [Chapter 13](chapter13-streaming-philosophy.md) | **Next:** [Part 4 Coming Soon](#)
+## 1. Introduction
+
+In this final chapter, we step back from the technical details to examine something fundamental: **what are we building, and what are its consequences?**
+
+Throughout this book, we've explored architectures for reliable, scalable, and maintainable systems. But we've left out a crucial question: Is what we're building *good*?
+
+### 1.1. Data is About People
+
+**In plain English:** When we talk about "data," it's easy to think of it as abstract bits and bytes. But many datasets are about *people*—their behavior, interests, identities, relationships, health, and finances. Behind every row in a database is a human being.
+
+**In technical terms:** User activity logs, purchase histories, location data, communication metadata, and behavioral profiles all represent aspects of real people's lives. We must treat such data with humanity and respect.
+
+**Why it matters:** Software development increasingly involves ethical choices. Guidelines like the ACM Code of Ethics exist, but they're rarely discussed or enforced in practice. The result is sometimes a cavalier attitude toward privacy and potential harm.
+
+### 1.2. Technology is Not Neutral
+
+> **💡 Insight**
+>
+> A technology is not good or bad in itself—what matters is how it is used and how it affects people. A search engine and a weapon share this property: what determines their moral weight is their application and consequences. It is not sufficient for engineers to focus exclusively on technology while ignoring its effects on people.
+
+**What makes something "good" or "bad"?**
+
+Unlike technical concepts with precise definitions, ethics requires interpretation and judgment. Ethics is not a checklist to confirm compliance—it's a participatory, iterative process of reflection, in dialog with the people affected, with accountability for results.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    ETHICS IS NOT A CHECKLIST                              │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   ❌ NOT ETHICS:                       ✅ ETHICS:                         │
+│   ─────────────                        ────────                           │
+│   □ Privacy policy exists              • Ongoing reflection              │
+│   □ GDPR checkbox checked              • Dialog with affected people     │
+│   □ Legal reviewed it                  • Accountability for outcomes     │
+│   □ "Not my department"                • Considering unintended effects  │
+│                                        • Questioning assumptions         │
+│                                        • Iterating when harm is found    │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Predictive Analytics
+
+Predictive analytics is a major reason for excitement about "big data" and AI. But there's a critical difference between predicting weather and predicting whether a person is likely to reoffend, default on a loan, or make expensive insurance claims.
+
+### 2.1. Algorithmic Prison
+
+**In plain English:** Imagine being repeatedly rejected—for jobs, apartments, loans, insurance, air travel—without knowing why, and with no way to appeal. That's what happens when algorithms label someone as "risky."
+
+**The problem:**
+
+| Traditional Justice System | Algorithmic Decision-Making |
+|---------------------------|----------------------------|
+| Presumption of innocence | Presumption of risk |
+| Proof required | Pattern matching |
+| Right to appeal | Often no recourse |
+| Human accountability | "The algorithm decided" |
+
+Someone who has been (accurately or falsely) labeled as risky by algorithms may face systematic exclusion from key aspects of society. This constraint on freedom has been called **"algorithmic prison"**—sentenced without trial.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    THE ALGORITHMIC PRISON                                 │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   Person applies for:                                                     │
+│                                                                           │
+│   ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐              │
+│   │   Job   │    │  Loan   │    │ Housing │    │Insurance│              │
+│   └────┬────┘    └────┬────┘    └────┬────┘    └────┬────┘              │
+│        │              │              │              │                    │
+│        ▼              ▼              ▼              ▼                    │
+│   ┌─────────────────────────────────────────────────────────┐           │
+│   │              RISK SCORING ALGORITHM                      │           │
+│   │                                                          │           │
+│   │  Input: Name, address, browsing history, social         │           │
+│   │         graph, purchase patterns, location data...      │           │
+│   │                                                          │           │
+│   │  Output: "HIGH RISK" (reason: unknown/unexplainable)    │           │
+│   └───────────────────────────┬─────────────────────────────┘           │
+│                               │                                          │
+│                               ▼                                          │
+│                        ┌───────────┐                                     │
+│                        │  DENIED   │  ← No explanation                   │
+│                        │  DENIED   │  ← No appeal process                │
+│                        │  DENIED   │  ← No proof of guilt                │
+│                        │  DENIED   │  ← Sentence: indefinite             │
+│                        └───────────┘                                     │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2. Bias and Discrimination
+
+**In plain English:** If you train an AI on biased historical data, it will learn and amplify that bias. It's like asking someone who grew up in a racist household to be an impartial judge—their prejudices are baked in.
+
+**The laundering problem:**
+
+There's hope that data-driven decisions might be more fair than subjective human judgments. But algorithms learn patterns from historical data—and if that data contains bias, the algorithm will amplify it.
+
+> **💡 Insight**
+>
+> "Machine learning is like money laundering for bias." — Maciej Cegłowski
+>
+> This satirizes the belief that an algorithm could somehow take biased data as input and produce fair output. If the past is discriminatory, predictive analytics codify and amplify that discrimination.
+
+**Proxy discrimination:**
+
+Anti-discrimination laws prohibit treating people differently based on protected traits (race, gender, age, disability). But what if other features correlate with protected traits?
+
+| Seemingly Neutral Data | What It Can Reveal |
+|-----------------------|-------------------|
+| Postal/ZIP code | Race (in segregated neighborhoods) |
+| First name | Gender, ethnicity |
+| IP address | Location → race, income |
+| Purchasing patterns | Religion, health conditions |
+| Browser history | Sexual orientation, beliefs |
+
+### 2.3. Responsibility and Accountability
+
+**Who is responsible when algorithms fail?**
+
+- If a human makes a mistake, they can be held accountable
+- If a self-driving car causes an accident, who is responsible?
+- If a credit algorithm discriminates, is there recourse?
+- If your ML system faces judicial review, can you explain how it decided?
+
+**Credit scores vs. predictive analytics:**
+
+| Traditional Credit Score | ML-Based Scoring |
+|-------------------------|------------------|
+| Based on *your* borrowing history | Based on *people like you* |
+| Errors can be corrected | Errors nearly impossible to identify |
+| "How did you behave?" | "Who is similar to you?" |
+| Specific, auditable factors | Opaque, unexplainable patterns |
+
+> **💡 Insight**
+>
+> Much data is statistical—even if the probability distribution is correct overall, individual cases may be wrong. If average life expectancy is 80 years, that doesn't mean you'll die on your 80th birthday. Similarly, a prediction system's output may be correct on average but wrong for *you* specifically.
+
+---
+
+## 3. Feedback Loops
+
+### 3.1. Self-Reinforcing Problems
+
+Predictive analytics create **feedback loops** where predictions influence outcomes, which then reinforce the predictions.
+
+**Example: The credit score trap**
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    SELF-REINFORCING FEEDBACK LOOP                         │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   ┌─────────────────┐                                                    │
+│   │ Good worker,    │                                                    │
+│   │ good credit     │                                                    │
+│   └────────┬────────┘                                                    │
+│            │                                                              │
+│            ▼  Unexpected misfortune (medical emergency, job loss)        │
+│   ┌─────────────────┐                                                    │
+│   │ Missed payments │                                                    │
+│   └────────┬────────┘                                                    │
+│            │                                                              │
+│            ▼                                                              │
+│   ┌─────────────────┐                                                    │
+│   │ Credit score    │                                                    │
+│   │ drops           │◀──────────────────────────────┐                    │
+│   └────────┬────────┘                               │                    │
+│            │                                         │                    │
+│            ▼                                         │                    │
+│   ┌─────────────────┐                               │                    │
+│   │ Harder to find  │                               │ Reinforces         │
+│   │ employment      │                               │                    │
+│   └────────┬────────┘                               │                    │
+│            │                                         │                    │
+│            ▼                                         │                    │
+│   ┌─────────────────┐                               │                    │
+│   │ Prolonged       │                               │                    │
+│   │ joblessness     │───────────────────────────────┘                    │
+│   └────────┬────────┘                                                    │
+│            │                                                              │
+│            ▼                                                              │
+│   ┌─────────────────┐                                                    │
+│   │ Deeper poverty  │  ← Downward spiral due to poisonous                │
+│   │ & worse scores  │    assumptions, hidden behind                      │
+│   └─────────────────┘    mathematical rigor                              │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Example: Algorithmic price collusion**
+
+When gas stations in Germany introduced algorithmic pricing, economists found that competition *decreased* and consumer prices *increased*—because the algorithms learned to collude without any explicit agreement.
+
+### 3.2. Systems Thinking
+
+We can't always predict feedback loops. But we can try by using **systems thinking**—analyzing not just the computerized parts, but the entire system including people interacting with it.
+
+**Key questions:**
+- Does the system reinforce existing differences (making the rich richer, poor poorer)?
+- Or does it combat injustice?
+- What are the unintended consequences?
+
+---
+
+## 4. Privacy and Surveillance
+
+### 4.1. The Surveillance Thought Experiment
+
+**Try replacing "data" with "surveillance":**
+
+> "In our **surveillance**-driven organization, we collect real-time **surveillance** streams and store them in our **surveillance** warehouse. Our **surveillance** scientists use advanced analytics and **surveillance** processing to derive new insights."
+
+Does that still sound good? The point is stark but necessary for this book: *Designing Surveillance-Intensive Applications*.
+
+> **💡 Insight**
+>
+> In our attempt to make software "eat the world," we have built the greatest mass surveillance infrastructure the world has ever seen. We are rapidly approaching a world where every inhabited space contains at least one internet-connected microphone—smartphones, smart TVs, voice assistants, baby monitors, even children's toys with cloud-based speech recognition.
+
+**Historical perspective:**
+
+Even the most totalitarian regimes could only *dream* of:
+- Putting a microphone in every room
+- Forcing everyone to carry a device tracking their location
+- Recording all communications and purchases
+
+Yet we now *voluntarily* accept this. The difference? The data is collected by corporations for services, not governments for control. But the capability is the same.
+
+### 4.2. Consent and Freedom of Choice
+
+**"Users agreed to the privacy policy"**
+
+This argument has several problems:
+
+| Claim | Reality |
+|-------|---------|
+| "Users consented" | Privacy policies obscure rather than illuminate |
+| "It's a fair exchange" | No negotiation; terms are take-it-or-leave-it |
+| "They can opt out" | Opting out of essential services isn't realistic |
+| "Data is only about them" | Your data reveals things about others too |
+
+**The GDPR standard for consent:**
+
+The EU's General Data Protection Regulation requires that consent be:
+- **Freely given** — not coerced
+- **Specific** — for defined purposes
+- **Informed** — clearly explained
+- **Unambiguous** — no pre-ticked boxes or silence
+
+If withdrawing consent causes detriment, it wasn't "freely given."
+
+**Network effects trap:**
+
+For services that are "regarded by most people as essential for basic social participation," opting out has real social costs. Choosing not to use a dominant social network means missing opportunities—professional, social, informational.
+
+### 4.3. What Privacy Really Means
+
+**Privacy is NOT about keeping secrets.** It's about having the **freedom to choose** what to reveal, to whom, for what purpose.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    WHAT PRIVACY ACTUALLY MEANS                            │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   ❌ MISCONCEPTION:           ✅ REALITY:                                 │
+│   ────────────────            ───────────                                 │
+│   "Privacy means              "Privacy means having the                   │
+│    keeping everything          CHOICE about what to reveal,               │
+│    secret"                     to whom, and for what purpose"             │
+│                                                                           │
+│   EXAMPLE:                                                                │
+│   ────────                                                                │
+│   Someone with a rare disease might WANT to share their                  │
+│   medical data with researchers who could develop treatments.            │
+│                                                                           │
+│   But they would NOT want that data to affect their:                     │
+│   • Insurance coverage                                                    │
+│   • Employment opportunities                                              │
+│   • Social relationships                                                  │
+│                                                                           │
+│   Privacy = THEY decide, not a corporation's profit model                │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**When surveillance collects data, privacy rights are transferred:**
+
+Companies say "trust us to do the right thing"—meaning the right to decide what to reveal and what to keep secret shifts from the individual to the company. The company then exercises that privacy right to maximize profit, not to serve the individual.
+
+---
+
+## 5. Data as Power
+
+### 5.1. Data as a Toxic Asset
+
+Data is sometimes called "exhaust"—worthless waste to be recycled. But this view is backwards. From an economic perspective, if targeted advertising pays for a service, then user activity that generates behavioral data is a form of **labor**.
+
+**Data is valuable:**
+- Data brokers buy, aggregate, analyze, and resell personal information
+- Startups are valued by "eyeballs"—i.e., surveillance capabilities
+- When companies go bankrupt, user data is sold as an asset
+
+**Data is dangerous:**
+
+| Risk | Consequence |
+|------|-------------|
+| Data breaches | Intimate details exposed to criminals |
+| Government access | Secret deals, legal compulsion, or theft |
+| Company acquisition | New owners may not share your values |
+| Regime change | Data collected today may be used by future authoritarian governments |
+
+> **💡 Insight**
+>
+> Data has been called a "toxic asset" or "hazardous material." Maybe data is not the new gold, nor the new oil, but rather **the new uranium**—incredibly powerful and amazingly dangerous. "It is poor civic hygiene to install technologies that could someday facilitate a police state."
+
+**"Knowledge is power":**
+
+To scrutinize others while avoiding scrutiny oneself is one of the most important forms of power. This is why totalitarian governments want surveillance. Although tech companies don't overtly seek political power, the data they've accumulated gives them immense power over our lives—largely surreptitious, outside public oversight.
+
+### 5.2. Lessons from the Industrial Revolution
+
+**In plain English:** The Industrial Revolution brought economic growth and improved living standards—but also child labor, dangerous working conditions, and terrible pollution. It took decades to establish safeguards. We're in a similar transition with data.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│              INDUSTRIAL REVOLUTION vs. INFORMATION AGE                    │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   INDUSTRIAL REVOLUTION               INFORMATION AGE                     │
+│   ──────────────────────              ───────────────                     │
+│                                                                           │
+│   Problem: Pollution                  Problem: Data collection            │
+│   • Air (smoke, chemicals)            • Behavioral surveillance           │
+│   • Water (industrial waste)          • Location tracking                 │
+│   • Child labor                       • Predictive profiling              │
+│   • Dangerous workplaces              • Algorithmic discrimination        │
+│                                                                           │
+│   Solution: Regulation                Solution: ???                        │
+│   • Environmental protection          • GDPR (partial)                    │
+│   • Safety protocols                  • Industry self-regulation          │
+│   • Child labor laws                  • Engineering ethics                │
+│   • Health inspections                • Culture shift needed              │
+│                                                                           │
+│   "Data is the pollution problem of the information age,                 │
+│    and protecting privacy is the environmental challenge."               │
+│                                       — Bruce Schneier                    │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+> **💡 Insight**
+>
+> Just as we look back at the early Industrial Revolution and wonder how our ancestors could have ignored pollution in their rush to build an industrial world, our grandchildren will look back at us during these early decades of the information age and judge us on how we addressed the challenge of data collection and misuse. We should try to make them proud.
+
+---
+
+## 6. What We Can Do
+
+### 6.1. Legislation and Self-Regulation
+
+**GDPR principles:**
+
+The European GDPR states that personal data must be:
+- Collected for **specified, explicit, and legitimate purposes**
+- **Not processed** in ways incompatible with those purposes
+- **Adequate, relevant, and limited** to what is necessary
+
+**The tension:**
+
+This principle of **data minimization** directly conflicts with the philosophy of Big Data, which maximizes data collection, combines datasets, and explores for unexpected insights. "Exploration" means using data for *unforeseen* purposes—the opposite of "specified and explicit."
+
+**Reality check:**
+- GDPR has had some effect on online advertising
+- But enforcement has been weak
+- Little cultural change in the broader tech industry
+
+### 6.2. A Culture Shift
+
+Fundamentally, we need a **culture shift** in tech:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    THE CULTURE SHIFT WE NEED                              │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   STOP:                                START:                             │
+│   ─────                                ──────                             │
+│   • Viewing users as metrics           • Remembering users are humans     │
+│   • Maximizing data collection         • Minimizing what we collect       │
+│   • Keeping users in the dark          • Educating users about data use   │
+│   • Retaining data forever             • Purging when no longer needed    │
+│   • Treating privacy as obstacle       • Treating privacy as fundamental  │
+│   • "Not my department"                • Taking responsibility            │
+│                                                                           │
+│   PRINCIPLE: Data you don't have is data that can't be:                  │
+│   • Leaked                                                                │
+│   • Stolen                                                                │
+│   • Compelled by governments to be handed over                           │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**As engineers, if we don't consider the societal impact of our work, we're not doing our job.**
+
+Individual rights over personal data are like a national park—if we don't explicitly protect and care for them, they will be destroyed. It will be the tragedy of the commons, and we will all be worse off.
+
+Ubiquitous surveillance is not inevitable. We are still able to stop it.
+
+---
+
+## 7. Summary: The Whole Book
+
+This brings us to the end of the book. Let's recap the journey:
+
+### Part I: Foundations of Data Systems
+
+**Chapter 1 — Trade-offs:** Analytical vs. operational systems, cloud vs. self-hosting, distributed vs. single-node, balancing business and user needs.
+
+**Chapter 2 — Nonfunctional Requirements:** Performance, reliability, scalability, and maintainability.
+
+**Chapter 3 — Data Models:** Relational, document, and graph models; event sourcing; DataFrames. Query languages: SQL, Cypher, SPARQL, Datalog, GraphQL.
+
+**Chapter 4 — Storage and Retrieval:** LSM-trees and B-trees for OLTP, column-oriented storage for analytics, full-text and vector search for information retrieval.
+
+**Chapter 5 — Encoding and Evolution:** Data serialization formats, schema evolution, and data flow via databases, services, workflows, and events.
+
+### Part II: Distributed Data
+
+**Chapter 6 — Replication:** Single-leader, multi-leader, and leaderless replication; consistency models; sync engines for offline operation.
+
+**Chapter 7 — Sharding:** Partitioning strategies, rebalancing, request routing, secondary indexes.
+
+**Chapter 8 — Transactions:** Durability, isolation levels (read committed, snapshot, serializable), distributed transactions.
+
+**Chapter 9 — Distributed Systems Fundamentals:** Network faults, clock errors, process pauses, and why even simple things like locks are hard.
+
+**Chapter 10 — Consistency and Consensus:** Consensus algorithms and linearizability.
+
+### Part III: Derived Data
+
+**Chapter 11 — Batch Processing:** Unix tools to MapReduce to modern dataflow engines; distributed filesystems and object stores.
+
+**Chapter 12 — Stream Processing:** Message brokers, change data capture, fault tolerance, streaming joins.
+
+**Chapter 13 — Streaming Philosophy:** Integrating disparate systems, evolving systems, scaling applications.
+
+**Chapter 14 — Doing the Right Thing:** Data can do good, but also harm—discrimination, surveillance, exploitation. We carry responsibility.
+
+---
+
+### Final Thoughts
+
+> **💡 Insight**
+>
+> Data can be used to do good, but it can also do significant harm: making decisions that seriously affect people's lives and are difficult to appeal; leading to discrimination and exploitation; normalizing surveillance; exposing intimate information. We run the risk of data breaches, and well-intentioned uses may have unintended consequences.
+
+As software and data have such a large impact on the world, we as engineers must remember that we carry a responsibility to work toward the kind of world we want to live in: **a world that treats people with humanity and respect.**
+
+Let's work together toward that goal.
+
+---
+
+**Previous:** [Chapter 13](chapter13-streaming-philosophy.md) | **Next:** [Glossary](#)

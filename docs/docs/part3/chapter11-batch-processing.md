@@ -1,132 +1,966 @@
 ---
 sidebar_position: 1
 title: "Chapter 11. Batch Processing"
-description: "Learn about batch processing systems, MapReduce, and distributed data processing"
+description: "Learn about batch processing systems, MapReduce, distributed filesystems, and how to process massive datasets efficiently"
 ---
 
-Chapter 11. Batch Processing
-A system cannot be successful if it is too strongly influenced by a single person. Once the initial design is complete and fairly robust, the real test begins as people with many different viewpoints undertake their own experiments.
+# Chapter 11. Batch Processing
 
-Donald Knuth
+> A system cannot be successful if it is too strongly influenced by a single person. Once the initial design is complete and fairly robust, the real test begins as people with many different viewpoints undertake their own experiments.
+>
+> _Donald Knuth_
 
-In this chapter, we explored the design and implementation of batch processing systems. We began with the classic Unix toolchain (awk, sort, uniq, etc.), to illustrate fundamental batch processing primitives such as sorting and counting.
+## Table of Contents
 
-We then scaled up to distributed batch processing systems. We saw that batch-style I/O processes immutable, bounded input datasets to produce output data, allowing reruns and debugging without side effects. To process files, we saw that batch frameworks have three main components: an orchestration layer that determines where and when jobs run, a storage layer to persist data, and a computation layer that processes the actual data.
+1. [Introduction](#1-introduction)
+   - 1.1. [Online vs. Batch vs. Stream](#11-online-vs-batch-vs-stream)
+   - 1.2. [Why Batch Processing Matters](#12-why-batch-processing-matters)
+2. [Batch Processing with Unix Tools](#2-batch-processing-with-unix-tools)
+   - 2.1. [Simple Log Analysis](#21-simple-log-analysis)
+   - 2.2. [Chain of Commands vs. Custom Program](#22-chain-of-commands-vs-custom-program)
+   - 2.3. [Sorting vs. In-Memory Aggregation](#23-sorting-vs-in-memory-aggregation)
+3. [Batch Processing in Distributed Systems](#3-batch-processing-in-distributed-systems)
+   - 3.1. [Distributed Filesystems](#31-distributed-filesystems)
+   - 3.2. [Object Stores](#32-object-stores)
+   - 3.3. [Distributed Job Orchestration](#33-distributed-job-orchestration)
+   - 3.4. [Resource Allocation](#34-resource-allocation)
+   - 3.5. [Scheduling Workflows](#35-scheduling-workflows)
+   - 3.6. [Handling Faults](#36-handling-faults)
+4. [Batch Processing Models](#4-batch-processing-models)
+   - 4.1. [MapReduce](#41-mapreduce)
+   - 4.2. [Dataflow Engines](#42-dataflow-engines)
+   - 4.3. [Shuffling Data](#43-shuffling-data)
+   - 4.4. [JOIN and GROUP BY](#44-join-and-group-by)
+5. [Query Languages and DataFrames](#5-query-languages-and-dataframes)
+   - 5.1. [SQL for Batch Processing](#51-sql-for-batch-processing)
+   - 5.2. [DataFrames](#52-dataframes)
+   - 5.3. [Batch Processing and Data Warehouses Converge](#53-batch-processing-and-data-warehouses-converge)
+6. [Batch Use Cases](#6-batch-use-cases)
+   - 6.1. [Extract-Transform-Load (ETL)](#61-extract-transform-load-etl)
+   - 6.2. [Analytics](#62-analytics)
+   - 6.3. [Machine Learning](#63-machine-learning)
+   - 6.4. [Bulk Data Imports](#64-bulk-data-imports)
+7. [Summary](#7-summary)
 
-We looked at how distributed filesystems and object stores manage large files through block-based replication, caching, and metadata services, and how modern batch frameworks interact with these systems using pluggable APIs. We also discussed how orchestrators schedule tasks, allocate resources, and handle faults in large clusters. We also compared job orchestrators that schedule jobs with workflow orchestrators that manage the lifecycle of a collection of jobs that run in a dependency graph.
+---
 
-We surveyed batch processing models, starting with MapReduce and its canonical map and reduce functions. Next, we turned to dataflow engines like Spark and Flink, which offer simpler-to-use dataflow APIs and better performance. To understand how batch jobs scale, we covered the shuffle algorithm, a foundational operation that enables grouping, joining, and aggregation.
+## 1. Introduction
 
-As batch systems matured, focus shifted to usability. You learned about high-level query languages like SQL and DataFrame APIs, which make batch jobs more accessible and easier to optimize. Query optimizers translate declarative queries into efficient execution plans.
+**In plain English:** Think of batch processing like doing laundry. Instead of washing each shirt individually as it gets dirty (that would be exhausting!), you wait until you have a full load, then process everything at once. Batch processing works the same way with data—you collect a bunch of it, then process it all together.
 
-We finished the chapter with common batch processing use cases:
+**In technical terms:** Batch processing takes a set of input data (which is read-only), and produces output data (which is generated from scratch every time the job runs). Unlike online transactions, batch jobs don't mutate data—they derive new outputs from existing inputs.
 
-ETL pipelines, which extract, transform, and load data between different systems using scheduled workflows;
+**Why it matters:** If you introduce a bug and the output is wrong, you can simply roll back to a previous version of the code and rerun the job. This "human fault tolerance" enables faster feature development because mistakes aren't irreversible.
 
-Analytics, where batch jobs support both pre-aggregated dashboards and ad hoc queries;
+### 1.1. Online vs. Batch vs. Stream
 
-Machine learning, where batch jobs prepare and process large training datasets;
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    THREE STYLES OF DATA PROCESSING                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ONLINE SYSTEMS              BATCH SYSTEMS              STREAM SYSTEMS   │
+│  ───────────────             ─────────────              ──────────────   │
+│                                                                          │
+│  Request → Response          Input → Output             Event → Action   │
+│       ↓                           ↓                          ↓           │
+│  User clicks               Job processes               Message arrives  │
+│  "Buy Now"                 yesterday's logs            in queue         │
+│       ↓                           ↓                          ↓           │
+│  Response in               Results in                  Processed in     │
+│  milliseconds              minutes/hours               seconds          │
+│                                                                          │
+│  ┌─────────┐               ┌─────────────┐             ┌───────────┐    │
+│  │ Primary │               │  Primary    │             │  Primary  │    │
+│  │ Metric: │               │  Metric:    │             │  Metric:  │    │
+│  │ Latency │               │  Throughput │             │  Freshness│    │
+│  └─────────┘               └─────────────┘             └───────────┘    │
+│                                                                          │
+│  Examples:                  Examples:                   Examples:        │
+│  - Web servers              - Log analysis              - Fraud detection│
+│  - Databases                - ML training               - Live dashboards│
+│  - APIs                     - ETL pipelines             - CDC replication│
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-Bulk imports, which populate production-facing systems from batch outputs, often via streams or bulk loading tools.
+| System Type | Response Time | Input | Examples |
+|-------------|---------------|-------|----------|
+| **Online** | Milliseconds | Individual requests | Web servers, APIs, databases |
+| **Batch** | Minutes to days | Bounded datasets | ETL, ML training, analytics |
+| **Stream** | Seconds | Unbounded events | Real-time dashboards, CDC |
 
-In the next chapter, we will turn to stream processing, in which the input is unbounded—that is, you still have a job, but its inputs are never-ending streams of data. In this case, a job is never complete, because at any time there may still be more work coming in. We shall see that stream and batch processing are similar in some respects, but the assumption of unbounded streams also changes a lot about how we build systems.
+### 1.2. Why Batch Processing Matters
 
-Footnotes
-References
- Nathan Marz. How to Beat the CAP Theorem. nathanmarz.com, October 2011. Archived at perma.cc/4BS9-R9A4
+Batch processing offers unique advantages that make it a fundamental building block for reliable systems:
 
- Molly Bartlett Dishman and Martin Fowler. Agile Architecture. At O’Reilly Software Architecture Conference, March 2015.
+> **💡 Insight**
+>
+> The key property of batch processing is **immutability**: inputs are never modified. This seemingly simple constraint has profound implications. If something goes wrong, you can always rerun the job to produce correct output. The same input files can be used by multiple jobs for different purposes. And you can compare outputs across job runs to detect anomalies.
 
- Jeffrey Dean and Sanjay Ghemawat. MapReduce: Simplified Data Processing on Large Clusters. At 6th USENIX Symposium on Operating System Design and Implementation (OSDI), December 2004.
+**Benefits of batch processing:**
 
- Shivnath Babu and Herodotos Herodotou. Massively Parallel Databases and MapReduce Systems. Foundations and Trends in Databases, volume 5, issue 1, pages 1–104, November 2013. doi:10.1561/1900000036
+1. **Human fault tolerance** — If you deploy buggy code that produces wrong output, just roll back and rerun. Compare this to a database where bad writes corrupt data permanently.
 
- David J. DeWitt and Michael Stonebraker. MapReduce: A Major Step Backwards. Originally published at databasecolumn.vertica.com, January 2008. Archived at perma.cc/U8PA-K48V
+2. **Reproducibility** — The same input always produces the same output, making debugging straightforward.
 
- Henry Robinson. The Elephant Was a Trojan Horse: On the Death of Map-Reduce at Google. the-paper-trail.org, June 2014. Archived at perma.cc/9FEM-X787
+3. **Parallel processing** — Different parts of the input can be processed independently, enabling horizontal scaling.
 
- Urs Hölzle. R.I.P. MapReduce. After having served us well since 2003, today we removed the remaining internal codebase for good. twitter.com, September 2019. Archived at perma.cc/B34T-LLY7
+4. **Cost efficiency** — Jobs can run during off-peak hours, use spot instances, and process massive amounts of data economically.
 
- Adam Drake. Command-Line Tools Can Be 235x Faster than Your Hadoop Cluster. aadrake.com, January 2014. Archived at perma.cc/87SP-ZMCY
+---
 
- sort: Sort text files. GNU Coreutils 9.7 Documentation, Free Software Foundation, Inc., 2025.
+## 2. Batch Processing with Unix Tools
 
- Michael Ovsiannikov, Silvius Rus, Damian Reeves, Paul Sutter, Sriram Rao, and Jim Kelly. The Quantcast File System. Proceedings of the VLDB Endowment, volume 6, issue 11, pages 1092–1101, August 2013. doi:10.14778/2536222.2536234
+Before diving into distributed systems, let's understand batch processing fundamentals using tools you already have: Unix commands.
 
- Andrew Wang, Zhe Zhang, Kai Zheng, Uma Maheswara G., and Vinayakumar B. Introduction to HDFS Erasure Coding in Apache Hadoop. blog.cloudera.com, September 2015. Archived at archive.org
+### 2.1. Simple Log Analysis
 
- Andy Warfield. Building and operating a pretty big storage system called S3. allthingsdistributed.com, July 2023. Archived at perma.cc/7LPK-TP7V
+Say you have a web server log file and want to find the five most popular pages:
 
- Vinod Kumar Vavilapalli, Arun C. Murthy, Chris Douglas, Sharad Agarwal, Mahadev Konar, Robert Evans, Thomas Graves, Jason Lowe, Hitesh Shah, Siddharth Seth, Bikas Saha, Carlo Curino, Owen O’Malley, Sanjay Radia, Benjamin Reed, and Eric Baldeschwieler. Apache Hadoop YARN: Yet Another Resource Negotiator. At 4th Annual Symposium on Cloud Computing (SoCC), October 2013. doi:10.1145/2523616.2523633
+```
+216.58.210.78 - - [27/Jun/2025:17:55:11 +0000] "GET /css/typography.css HTTP/1.1"
+200 3377 "https://martin.kleppmann.com/" "Mozilla/5.0 ..."
+```
 
- Richard M. Karp. Reducibility Among Combinatorial Problems. Complexity of Computer Computations. The IBM Research Symposia Series. Springer, 1972. doi:10.1007/978-1-4684-2001-2_9
+You can analyze it with a chain of Unix commands:
 
- J. D. Ullman. NP-Complete Scheduling Problems. Journal of Computer and System Sciences, volume 10, issue 3, June 1975. doi:10.1016/S0022-0000(75)80008-0
+```bash
+cat /var/log/nginx/access.log |   # 1. Read the log file
+  awk '{print $7}' |               # 2. Extract the URL (7th field)
+  sort             |               # 3. Sort URLs alphabetically
+  uniq -c          |               # 4. Count consecutive duplicates
+  sort -r -n       |               # 5. Sort by count (descending)
+  head -n 5                        # 6. Take top 5
+```
 
- Gilad David Maayan. The complete guide to spot instances on AWS, Azure and GCP. datacenterdynamics.com, March 2021. Archived at archive.org
+**Output:**
+```
+4189 /favicon.ico
+3631 /2016/02/08/how-to-do-distributed-locking.html
+2124 /2020/11/18/distributed-systems-and-elliptic-curves.html
+1369 /
+ 915 /css/typography.css
+```
 
- Abhishek Verma, Luis Pedrosa, Madhukar Korupolu, David Oppenheimer, Eric Tune, and John Wilkes. Large-Scale Cluster Management at Google with Borg. At 10th European Conference on Computer Systems (EuroSys), April 2015. doi:10.1145/2741948.2741964
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    UNIX PIPELINE DATA FLOW                                │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  access.log                                                               │
+│      │                                                                    │
+│      ▼                                                                    │
+│  ┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐     │
+│  │  cat   │───▶│  awk   │───▶│  sort  │───▶│ uniq-c │───▶│  sort  │──┐  │
+│  └────────┘    └────────┘    └────────┘    └────────┘    └────────┘  │  │
+│                                                                       │  │
+│  Full lines    URLs only     Sorted        Counted       By count    │  │
+│  from file     extracted     A-Z           per URL       descending  │  │
+│                                                                       │  │
+│                                                    ┌────────┐         │  │
+│                                                    │  head  │◀────────┘  │
+│                                                    └────────┘            │
+│                                                         │                │
+│                                                         ▼                │
+│                                                    Top 5 URLs            │
+└──────────────────────────────────────────────────────────────────────────┘
+```
 
- Matei Zaharia, Mosharaf Chowdhury, Tathagata Das, Ankur Dave, Justin Ma, Murphy McCauley, Michael J. Franklin, Scott Shenker, and Ion Stoica. Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing. At 9th USENIX Symposium on Networked Systems Design and Implementation (NSDI), April 2012.
+> **💡 Insight**
+>
+> This pipeline processes gigabytes in seconds because each tool does one thing well and data flows between them efficiently. The key pattern is **sort → group → aggregate**, which is exactly what distributed batch systems like MapReduce use at massive scale.
 
- Paris Carbone, Stephan Ewen, Seif Haridi, Asterios Katsifodimos, Volker Markl, and Kostas Tzoumas. Apache Flink™: Stream and Batch Processing in a Single Engine. Bulletin of the IEEE Computer Society Technical Committee on Data Engineering, volume 38, issue 4, December 2015. Archived at perma.cc/G3N3-BKX5
+### 2.2. Chain of Commands vs. Custom Program
 
- Mark Grover, Ted Malaska, Jonathan Seidman, and Gwen Shapira. Hadoop Application Architectures. O’Reilly Media, 2015. ISBN: 978-1-491-90004-8
+The same analysis in Python:
 
- Jules S. Damji, Brooke Wenig, Tathagata Das, and Denny Lee. Learning Spark, 2nd Edition. O’Reilly Media, 2020. ISBN: 978-1492050049
+```python
+from collections import defaultdict
 
- Michael Isard, Mihai Budiu, Yuan Yu, Andrew Birrell, and Dennis Fetterly. Dryad: Distributed Data-Parallel Programs from Sequential Building Blocks. At 2nd European Conference on Computer Systems (EuroSys), March 2007. doi:10.1145/1272996.1273005
+counts = defaultdict(int)  # Counter for each URL
 
- Daniel Warneke and Odej Kao. Nephele: Efficient Parallel Data Processing in the Cloud. At 2nd Workshop on Many-Task Computing on Grids and Supercomputers (MTAGS), November 2009. doi:10.1145/1646468.1646476
+with open('/var/log/nginx/access.log', 'r') as file:
+    for line in file:
+        url = line.split()[6]  # Extract URL (7th field, 0-indexed)
+        counts[url] += 1       # Increment counter
 
- Hossein Ahmadi. In-memory query execution in Google BigQuery. cloud.google.com, August 2016. Archived at perma.cc/DGG2-FL9W
+# Sort by count descending, take top 5
+top5 = sorted(((count, url) for url, count in counts.items()),
+              reverse=True)[:5]
 
- Tom White. Hadoop: The Definitive Guide, 4th edition. O’Reilly Media, 2015. ISBN: 978-1-491-90163-2
+for count, url in top5:
+    print(f"{count} {url}")
+```
 
- Fabian Hüske. Peeking into Apache Flink’s Engine Room. flink.apache.org, March 2015. Archived at perma.cc/44BW-ALJX
+Both approaches work, but the execution models differ fundamentally:
 
- Mostafa Mokhtar. Hive 0.14 Cost Based Optimizer (CBO) Technical Overview. hortonworks.com, March 2015. Archived on archive.org
+| Aspect | Unix Pipeline | Python Script |
+|--------|---------------|---------------|
+| **Aggregation** | Sort then count adjacent | Hash table in memory |
+| **Memory** | Streaming (minimal) | Proportional to unique URLs |
+| **Large data** | Spills to disk automatically | May run out of memory |
 
- Michael Armbrust, Reynold S. Xin, Cheng Lian, Yin Huai, Davies Liu, Joseph K. Bradley, Xiangrui Meng, Tomer Kaftan, Michael J. Franklin, Ali Ghodsi, and Matei Zaharia. Spark SQL: Relational Data Processing in Spark. At ACM International Conference on Management of Data (SIGMOD), June 2015. doi:10.1145/2723372.2742797
+### 2.3. Sorting vs. In-Memory Aggregation
 
- Ammar Chalifah. Tracking payments at scale. bolt.eu.com, June 2025. Archived at perma.cc/Q4KX-8K3J
+**In plain English:** Imagine counting votes. You could either keep a tally sheet (hash table) where you update counts as you go, or you could sort all the ballots by candidate name first, then just count how many are in each pile.
 
- Nafi Ahmet Turgut, Hamza Akyıldız, Hasan Burak Yel, Mehmet İkbal Özmen, Mutlu Polatcan, Pinar Baki, and Esra Kayabali. Demand forecasting at Getir built with Amazon Forecast. aws.amazon.com.com, May 2023. Archived at perma.cc/H3H6-GNL7
+**When to use which:**
 
- Jason (Siyu) Zhu. Enhancing homepage feed relevance by harnessing the power of large corpus sparse ID embeddings. linkedin.com, August 2023. Archived at archive.org
+- **Hash table (in-memory)**: Fast when all unique keys fit in memory. If you have 1 million log entries but only 10,000 unique URLs, a hash table works great.
 
- Avery Ching, Sital Kedia, and Shuojie Wang. Apache Spark @Scale: A 60 TB+ production use case. engineering.fb.com, August 2016. Archived at perma.cc/F7R5-YFAV
+- **Sorting**: Better when data exceeds memory. The `sort` utility automatically spills to disk and parallelizes across CPU cores. Mergesort has sequential access patterns that perform well on disk.
 
- Edward Kim. How ACH works: A developer perspective — Part 1. engineering.gusto.com, April 2014. Archived at perma.cc/F67P-VBLK
+> **💡 Insight**
+>
+> The Unix `sort` command is deceptively powerful—it automatically handles larger-than-memory datasets by spilling to disk and parallelizes across CPU cores. This is the same principle that distributed batch systems use: sort, merge, and scan.
 
- Zhamak Dehghani. How to Move Beyond a Monolithic Data Lake to a Distributed Data Mesh. martinfowler.com, May 2019. Archived at perma.cc/LN2L-L4VC
+**Limitation:** Unix tools run on a single machine. When datasets exceed local disk capacity, we need distributed batch processing frameworks.
 
- Chris Riccomini. What the Heck is a Data Mesh?! cnr.sh, June 2021. Archived at perma.cc/NEJ2-BAX3
+---
 
- Chad Sanderson. What Are Data Contracts? What Leaders Need to Know. gable.ai, January 2024. Archived at perma.cc/C6CJ-YC8B
+## 3. Batch Processing in Distributed Systems
 
- Daniel Abadi. Data Fabric vs. Data Mesh: What’s the Difference? starburst.io, November 2021. Archived at perma.cc/RSK3-HXDK
+A distributed batch processing framework is essentially a **distributed operating system**. Just as your laptop has storage, a scheduler, and programs connected by pipes, distributed frameworks have:
 
- Michael Armbrust, Ali Ghodsi, Reynold Xin, and Matei Zaharia. Lakehouse: A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics. At 11th Annual Conference on Innovative Data Systems Research (CIDR), January 2021.
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│              SINGLE MACHINE vs. DISTRIBUTED BATCH SYSTEM                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│     SINGLE MACHINE                      DISTRIBUTED SYSTEM               │
+│     ──────────────                      ──────────────────               │
+│                                                                          │
+│   ┌──────────────┐                    ┌──────────────────┐              │
+│   │  Local Disk  │      ───────▶      │ Distributed FS   │              │
+│   │  (ext4, XFS) │                    │ (HDFS, S3)       │              │
+│   └──────────────┘                    └──────────────────┘              │
+│                                                                          │
+│   ┌──────────────┐                    ┌──────────────────┐              │
+│   │  OS Scheduler│      ───────▶      │ Job Orchestrator │              │
+│   │              │                    │ (YARN, K8s)      │              │
+│   └──────────────┘                    └──────────────────┘              │
+│                                                                          │
+│   ┌──────────────┐                    ┌──────────────────┐              │
+│   │  Unix Pipes  │      ───────▶      │ Shuffle/Network  │              │
+│   │              │                    │ (data transfer)  │              │
+│   └──────────────┘                    └──────────────────┘              │
+│                                                                          │
+│   ┌──────────────┐                    ┌──────────────────┐              │
+│   │  Processes   │      ───────▶      │ Tasks            │              │
+│   │  (awk, sort) │                    │ (mappers,reducers)│              │
+│   └──────────────┘                    └──────────────────┘              │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
- Leslie G. Valiant. A Bridging Model for Parallel Computation. Communications of the ACM, volume 33, issue 8, pages 103–111, August 1990. doi:10.1145/79173.79181
+### 3.1. Distributed Filesystems
 
- Stephan Ewen, Kostas Tzoumas, Moritz Kaufmann, and Volker Markl. Spinning Fast Iterative Data Flows. Proceedings of the VLDB Endowment, volume 5, issue 11, pages 1268-1279, July 2012. doi:10.14778/2350229.2350245
+**In plain English:** Think of a distributed filesystem like a library system with multiple branches. Books (data blocks) are stored across different branches (machines), and there's a central catalog (metadata service) that knows where everything is. If one branch burns down, copies exist at other branches.
 
- Grzegorz Malewicz, Matthew H. Austern, Aart J. C. Bik, James C. Dehnert, Ilan Horn, Naty Leiser, and Grzegorz Czajkowski. Pregel: A System for Large-Scale Graph Processing. At ACM International Conference on Management of Data (SIGMOD), June 2010. doi:10.1145/1807167.1807184
+**Key components:**
 
- Richard MacManus. OpenAI Chats about Scaling LLMs at Anyscale’s Ray Summit. thenewstack.io, September 2023. Archived at perma.cc/YJD6-KUXU
+| Component | Local Filesystem | Distributed Filesystem |
+|-----------|------------------|------------------------|
+| **Block size** | 4 KB (ext4) | 128 MB (HDFS) or 4 MB (S3) |
+| **Data nodes** | Single disk | Many machines |
+| **Metadata** | Inodes on disk | NameNode / metadata service |
+| **Redundancy** | RAID | Replication or erasure coding |
+| **Access** | VFS API | DFS protocol (HDFS, S3 API) |
 
- Jay Kreps. Why Local State is a Fundamental Primitive in Stream Processing. oreilly.com, July 2014. Archived at perma.cc/P8HU-R5LA
+**How it works:**
 
- Félix GV. Open Sourcing Venice – LinkedIn’s Derived Data Platform. linkedin.com, September 2022. Archived at archive.org
+1. Files are split into large blocks (128 MB in HDFS)
+2. Each block is replicated across multiple machines (typically 3)
+3. A metadata service tracks which machines store which blocks
+4. Clients read blocks from any replica; writes go to all replicas
 
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    DISTRIBUTED FILESYSTEM ARCHITECTURE                    │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│                        ┌─────────────────┐                                │
+│                        │   NameNode /    │                                │
+│                        │  Metadata Svc   │                                │
+│                        │  (file→blocks)  │                                │
+│                        └────────┬────────┘                                │
+│                                 │                                         │
+│              ┌──────────────────┼──────────────────┐                      │
+│              │                  │                  │                      │
+│              ▼                  ▼                  ▼                      │
+│       ┌──────────┐       ┌──────────┐       ┌──────────┐                 │
+│       │ DataNode │       │ DataNode │       │ DataNode │                 │
+│       │    1     │       │    2     │       │    3     │                 │
+│       ├──────────┤       ├──────────┤       ├──────────┤                 │
+│       │ Block A  │       │ Block A  │       │ Block B  │                 │
+│       │ Block B  │       │ Block C  │       │ Block C  │                 │
+│       │ Block D  │       │ Block D  │       │ Block A  │                 │
+│       └──────────┘       └──────────┘       └──────────┘                 │
+│                                                                           │
+│       File "logs.parquet" = [Block A, Block B, Block C, Block D]         │
+│       Each block replicated 3x across different nodes                     │
+└──────────────────────────────────────────────────────────────────────────┘
+```
 
-search
-Previous chapter
-10. Consistency and Consensus
-Next chapter
-12. Stream Processing
+> **💡 Insight**
+>
+> DFS blocks are much larger than local filesystem blocks (128 MB vs 4 KB) because the overhead of tracking each block scales with the number of blocks. At petabyte scale, millions of 4 KB blocks would overwhelm the metadata service. Large blocks also amortize network overhead—it's more efficient to stream 128 MB than to make 32,000 separate 4 KB requests.
+
+### 3.2. Object Stores
+
+Object stores (S3, GCS, Azure Blob) have become the dominant storage layer for batch processing, replacing HDFS in many deployments.
+
+**Key differences from distributed filesystems:**
+
+| Feature | Distributed FS (HDFS) | Object Store (S3) |
+|---------|----------------------|-------------------|
+| **Operations** | Open, seek, read, write, close | GET, PUT (whole object) |
+| **Mutability** | Files can be appended | Objects are immutable |
+| **Directories** | True directories | Key prefixes (simulated) |
+| **Renames** | Atomic | Copy + delete (non-atomic) |
+| **Compute locality** | Tasks run on data nodes | Storage/compute separated |
+| **Cost model** | Capacity-based | Request + capacity |
+
+**Object URL structure:**
+```
+s3://my-data-bucket/2025/06/27/events.parquet
+     └── bucket ──┘ └─────── key ─────────┘
+```
+
+The slashes in the key are just conventions—there are no real directories. Listing objects with prefix `2025/06/` returns all matching keys.
+
+### 3.3. Distributed Job Orchestration
+
+**In plain English:** An orchestrator is like a construction site foreman. When you want to build something (run a job), the foreman figures out which workers are available, assigns tasks, monitors progress, and handles problems when workers get sick or equipment breaks.
+
+**Components of job orchestration:**
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    JOB ORCHESTRATION COMPONENTS                           │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐ │
+│  │                         SCHEDULER                                    │ │
+│  │  • Receives job requests                                            │ │
+│  │  • Decides which tasks run on which nodes                           │ │
+│  │  • Balances fairness vs. efficiency                                 │ │
+│  └───────────────────────────┬─────────────────────────────────────────┘ │
+│                              │                                           │
+│                              ▼                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐ │
+│  │                      RESOURCE MANAGER                                │ │
+│  │  • Tracks all nodes and their resources (CPU, GPU, memory)          │ │
+│  │  • Maintains global cluster state in ZooKeeper/etcd                 │ │
+│  │  • Knows what's running where                                       │ │
+│  └───────────────────────────┬─────────────────────────────────────────┘ │
+│                              │                                           │
+│         ┌────────────────────┼────────────────────┐                      │
+│         │                    │                    │                      │
+│         ▼                    ▼                    ▼                      │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐              │
+│  │  Executor   │      │  Executor   │      │  Executor   │              │
+│  │  (Node 1)   │      │  (Node 2)   │      │  (Node 3)   │              │
+│  │ ─────────── │      │ ─────────── │      │ ─────────── │              │
+│  │ Task A      │      │ Task B      │      │ Task C      │              │
+│  │ Task D      │      │ Task E      │      │ Task F      │              │
+│  └─────────────┘      └─────────────┘      └─────────────┘              │
+│                                                                           │
+│  Executors: Run tasks, send heartbeats, report status                    │
+│  Use cgroups for resource isolation between tasks                        │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Job request metadata includes:**
+- Number of tasks to execute
+- Resources per task (CPU, memory, disk, GPU)
+- Job identifier and access credentials
+- Input/output data locations
+- Executable code location
+
+### 3.4. Resource Allocation
+
+Scheduling is **NP-hard**—finding an optimal allocation is computationally infeasible. Consider this scenario:
+
+> A cluster has 160 CPU cores. Two jobs arrive, each requesting 100 cores. What should the scheduler do?
+
+**Options and trade-offs:**
+
+| Strategy | Behavior | Trade-off |
+|----------|----------|-----------|
+| **Fair share** | Run 80 tasks from each job | Neither finishes as fast as possible |
+| **Gang scheduling** | Wait for all 100 cores, run one job | Nodes sit idle while waiting |
+| **FIFO** | First job gets everything | Second job may starve |
+| **Preemption** | Kill some tasks to make room | Wasted work from killed tasks |
+
+Real schedulers use heuristics: FIFO, Dominant Resource Fairness (DRF), priority queues, capacity-based scheduling, and bin-packing algorithms.
+
+### 3.5. Scheduling Workflows
+
+Batch jobs often form **workflows** or **DAGs** (Directed Acyclic Graphs) where output of one job feeds into another:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    WORKFLOW / DAG EXAMPLE                                 │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│                    ┌─────────────┐                                       │
+│                    │ Raw Events  │                                       │
+│                    │   (Input)   │                                       │
+│                    └──────┬──────┘                                       │
+│                           │                                              │
+│                           ▼                                              │
+│                    ┌─────────────┐                                       │
+│                    │   Clean &   │                                       │
+│                    │   Parse     │                                       │
+│                    └──────┬──────┘                                       │
+│                           │                                              │
+│              ┌────────────┼────────────┐                                 │
+│              │            │            │                                 │
+│              ▼            ▼            ▼                                 │
+│       ┌───────────┐ ┌───────────┐ ┌───────────┐                         │
+│       │ Aggregate │ │ Join User │ │  Feature  │                         │
+│       │ by Region │ │  Profiles │ │ Engineer  │                         │
+│       └─────┬─────┘ └─────┬─────┘ └─────┬─────┘                         │
+│             │             │             │                                │
+│             ▼             ▼             ▼                                │
+│       ┌───────────┐ ┌───────────┐ ┌───────────┐                         │
+│       │ Regional  │ │  Joined   │ │  Training │                         │
+│       │  Report   │ │   Data    │ │   Data    │                         │
+│       └───────────┘ └───────────┘ └───────────┘                         │
+│                                                                           │
+│  Workflow schedulers: Airflow, Dagster, Prefect                          │
+│  Wait for all inputs before running dependent jobs                        │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+> **💡 Insight**
+>
+> There's an important distinction between **job orchestrators** (YARN, Kubernetes) that schedule individual jobs and **workflow orchestrators** (Airflow, Dagster) that manage dependencies between jobs. A workflow with 50-100 interconnected jobs is common in data pipelines.
+
+### 3.6. Handling Faults
+
+Batch jobs run for long periods—minutes to days. With many parallel tasks, failures are inevitable:
+
+- Hardware faults (especially on commodity hardware)
+- Network interruptions
+- **Preemption** by higher-priority jobs
+- Spot instance terminations (to save cost)
+
+**Fault tolerance strategies:**
+
+| System | Intermediate Data | Recovery Method |
+|--------|-------------------|-----------------|
+| **MapReduce** | Written to DFS | Reread from DFS |
+| **Spark** | Kept in memory | Recompute from lineage |
+| **Flink** | Periodic checkpoints | Restore from checkpoint |
+
+> **💡 Insight**
+>
+> Because batch jobs regenerate output from scratch, fault recovery is simpler than in online systems: just delete partial output and rerun the failed task. This wouldn't work if the job had side effects (like sending emails), which is why batch processing emphasizes immutable inputs and pure transformations.
+
+---
+
+## 4. Batch Processing Models
+
+### 4.1. MapReduce
+
+MapReduce mirrors our Unix log analysis example:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    MAPREDUCE PIPELINE                                     │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   Unix:  cat | awk  | sort | uniq -c | sort -rn | head                   │
+│           │     │      │       │          │         │                     │
+│           ▼     ▼      ▼       ▼          ▼         ▼                     │
+│   MapReduce:                                                              │
+│         Read  Map   Shuffle   Reduce    (Second MapReduce job)           │
+│                                                                           │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   STEP 1: READ                                                            │
+│   Break input files into records                                          │
+│   Input: Parquet/Avro files on HDFS or S3                                │
+│                                                                           │
+│   STEP 2: MAP                                                             │
+│   Extract key-value pairs from each record                               │
+│   Example: (URL, 1) for each log line                                    │
+│                                                                           │
+│   STEP 3: SHUFFLE (implicit)                                              │
+│   Sort by key, group values with same key                                │
+│   All values for "page.html" go to same reducer                          │
+│                                                                           │
+│   STEP 4: REDUCE                                                          │
+│   Process grouped values, produce output                                 │
+│   Example: sum up the 1s → ("page.html", 42)                             │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Mapper and Reducer:**
+
+```python
+# Mapper: called for each input record
+def mapper(record):
+    url = record['request_url']
+    yield (url, 1)  # Emit key-value pair
+
+# Reducer: called for each unique key with all its values
+def reducer(key, values):
+    count = sum(values)  # values is iterator over all 1s
+    yield (key, count)
+```
+
+> **💡 Insight**
+>
+> MapReduce's programming model comes from **functional programming**—specifically Lisp's `map` and `reduce` (fold) higher-order functions. The key properties: map is embarrassingly parallel (each input processed independently), and reduce processes each key independently. This makes parallelization trivial.
+
+**Why MapReduce is mostly obsolete:**
+
+- Requires writing map/reduce in a general-purpose language
+- No job pipelining (must wait for upstream job to finish completely)
+- Always sorts between map and reduce (even when unnecessary)
+- Replaced by Spark, Flink, and SQL-based systems
+
+### 4.2. Dataflow Engines
+
+Modern engines like **Spark** and **Flink** improve on MapReduce:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    MAPREDUCE vs. DATAFLOW ENGINES                         │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   MapReduce:                                                              │
+│   ┌─────┐    ┌─────┐    ┌─────┐    ┌─────┐    ┌─────┐    ┌─────┐        │
+│   │ Map │───▶│Sort │───▶│Reduce│───▶│ Map │───▶│Sort │───▶│Reduce│       │
+│   └─────┘    └─────┘    └─────┘    └─────┘    └─────┘    └─────┘        │
+│      │                     │          │                     │            │
+│      └─────── DFS ────────┘          └─────── DFS ────────┘             │
+│        (always write)                   (always write)                   │
+│                                                                           │
+│   Dataflow Engine (Spark/Flink):                                         │
+│   ┌─────┐    ┌──────┐    ┌─────┐    ┌───────┐    ┌────────┐             │
+│   │Read │───▶│Filter│───▶│ Map │───▶│Shuffle│───▶│Aggregate│            │
+│   └─────┘    └──────┘    └─────┘    └───────┘    └────────┘             │
+│                  │            │                       │                  │
+│                  └────── In memory ──────────────────┘                   │
+│                     (only shuffle to disk if needed)                     │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Advantages of dataflow engines:**
+
+| Feature | MapReduce | Dataflow Engines |
+|---------|-----------|------------------|
+| **Sorting** | Always between stages | Only when needed |
+| **Intermediate data** | Written to DFS | In-memory or local disk |
+| **Operator fusion** | Each stage separate | Adjacent ops combined |
+| **Pipelining** | Wait for stage completion | Stream between stages |
+| **Process reuse** | New JVM per task | Reuse processes |
+
+### 4.3. Shuffling Data
+
+**In plain English:** Shuffling is like sorting mail at a post office. Letters arrive from many mailboxes (mappers), and need to be organized so all letters for the same zip code (key) end up in the same bin (reducer).
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    SHUFFLE IN MAPREDUCE                                   │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   Input Shards                           Output Shards                    │
+│   ────────────                           ────────────                     │
+│                                                                           │
+│   ┌─────────┐                            ┌─────────┐                     │
+│   │Shard m1 │─────┐                ┌────▶│Shard r1 │                     │
+│   └─────────┘     │                │     └─────────┘                     │
+│        │          │                │                                      │
+│   ┌────▼────┐     │    Shuffle     │     ┌─────────┐                     │
+│   │Mapper 1 │─────┼───────────────┼────▶│Shard r2 │                     │
+│   └─────────┘     │    (sort by   │     └─────────┘                     │
+│                   │     key hash)  │                                      │
+│   ┌─────────┐     │                │     ┌─────────┐                     │
+│   │Shard m2 │─────┤                └────▶│Shard r3 │                     │
+│   └─────────┘     │                      └─────────┘                     │
+│        │          │                           ▲                           │
+│   ┌────▼────┐     │                           │                           │
+│   │Mapper 2 │─────┤                           │                           │
+│   └─────────┘     │         ┌─────────────────┘                          │
+│                   │         │                                             │
+│   ┌─────────┐     │         │                                             │
+│   │Shard m3 │─────┘         │                                             │
+│   └─────────┘               │                                             │
+│        │                    │                                             │
+│   ┌────▼────┐               │                                             │
+│   │Mapper 3 │───────────────┘                                             │
+│   └─────────┘                                                             │
+│                                                                           │
+│   Each mapper creates sorted files for each reducer                       │
+│   hash(key) determines which reducer gets the key-value pair             │
+│   Reducers merge sorted files from all mappers                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Shuffle process:**
+
+1. Each mapper creates a separate output file for each reducer
+2. Key hash determines destination: `hash(key) % num_reducers`
+3. Mapper sorts key-value pairs within each file
+4. Reducers fetch their files from all mappers
+5. Reducers merge-sort the files together
+6. Same keys are now adjacent → reducer iterates over values
+
+> **💡 Insight**
+>
+> Despite the name, shuffle produces **sorted** order, not random order. The term comes from shuffling a deck of cards to redistribute them, not to randomize. Modern systems like BigQuery keep shuffle data in memory and use external shuffle services for resilience.
+
+### 4.4. JOIN and GROUP BY
+
+Shuffling enables distributed joins:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    SORT-MERGE JOIN                                        │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   ACTIVITY EVENTS                        USER PROFILES                    │
+│   ┌────────────────────┐                ┌───────────────────┐            │
+│   │ user_id: 123       │                │ user_id: 123      │            │
+│   │ page: /products    │                │ birth_date: 1990  │            │
+│   │ timestamp: 10:30   │                │ name: Alice       │            │
+│   ├────────────────────┤                └───────────────────┘            │
+│   │ user_id: 123       │                                                  │
+│   │ page: /checkout    │                                                  │
+│   │ timestamp: 10:35   │                                                  │
+│   ├────────────────────┤                                                  │
+│   │ user_id: 456       │                                                  │
+│   │ page: /home        │                                                  │
+│   └────────────────────┘                                                  │
+│                                                                           │
+│   ════════════════════════════════════════════════════════════════════   │
+│                           SHUFFLE BY user_id                              │
+│   ════════════════════════════════════════════════════════════════════   │
+│                                                                           │
+│   REDUCER FOR user_id=123:                                               │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ 1. User profile: {birth_date: 1990, name: Alice}   ← arrives first │  │
+│   │ 2. Event: {page: /products, timestamp: 10:30}                     │   │
+│   │ 3. Event: {page: /checkout, timestamp: 10:35}                     │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+│                                                                           │
+│   OUTPUT:                                                                 │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ {page: /products, viewer_birth_year: 1990}                        │   │
+│   │ {page: /checkout, viewer_birth_year: 1990}                        │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**How it works:**
+
+1. Two mappers: one for events (emit `user_id → event`), one for users (emit `user_id → profile`)
+2. Shuffle brings all records with same `user_id` to same reducer
+3. **Secondary sort** ensures user profile arrives first
+4. Reducer stores profile in variable, then iterates over events
+5. Minimal memory: only one user's data in memory at a time
+
+---
+
+## 5. Query Languages and DataFrames
+
+### 5.1. SQL for Batch Processing
+
+As batch systems matured, SQL became the lingua franca:
+
+```sql
+-- Find top pages by age group
+SELECT
+    page,
+    FLOOR((2025 - birth_year) / 10) * 10 AS age_decade,
+    COUNT(*) AS views
+FROM events e
+JOIN users u ON e.user_id = u.user_id
+GROUP BY page, age_decade
+ORDER BY views DESC
+LIMIT 100;
+```
+
+**Why SQL won:**
+
+- Analysts and developers already know it
+- Integrates with existing BI tools (Tableau, Looker)
+- Query optimizers can choose efficient execution plans
+- More concise than handwritten MapReduce
+
+**SQL-based batch engines:**
+- **Hive**: SQL on Hadoop/Spark
+- **Trino (Presto)**: Federated SQL across data sources
+- **Spark SQL**: SQL on Spark
+- **BigQuery, Snowflake**: Cloud data warehouses
+
+### 5.2. DataFrames
+
+Data scientists preferred the DataFrame model from R and Pandas:
+
+```python
+# Pandas-style DataFrame API (runs distributed on Spark)
+events_df = spark.read.parquet("s3://data/events/")
+users_df = spark.read.parquet("s3://data/users/")
+
+result = (events_df
+    .join(users_df, "user_id")
+    .withColumn("age", 2025 - users_df.birth_year)
+    .groupBy("page")
+    .agg(
+        count("*").alias("views"),
+        avg("age").alias("avg_viewer_age")
+    )
+    .orderBy(desc("views"))
+    .limit(100))
+
+result.write.parquet("s3://output/page-demographics/")
+```
+
+| Aspect | SQL | DataFrame API |
+|--------|-----|---------------|
+| **Style** | Declarative (what) | Step-by-step (how) |
+| **Optimization** | Query planner | Query planner (Spark) or immediate (Pandas) |
+| **Familiarity** | DBAs, analysts | Data scientists |
+| **Flexibility** | Standard operators | Custom functions easier |
+
+> **💡 Insight**
+>
+> Spark's DataFrame API is deceptively clever: unlike Pandas which executes immediately, Spark builds a **query plan** from your DataFrame operations, then optimizes it before execution. This means `df.filter(x).filter(y)` becomes a single optimized filter, not two passes over the data.
+
+### 5.3. Batch Processing and Data Warehouses Converge
+
+Historically separate, batch processing and data warehouses are merging:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│              CONVERGENCE OF BATCH AND WAREHOUSES                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   TRADITIONAL SEPARATION:                                                 │
+│                                                                           │
+│   Batch Processing              Data Warehouse                            │
+│   ─────────────────             ──────────────                            │
+│   • MapReduce, Spark            • Teradata, Oracle                        │
+│   • Flexible code               • SQL only                                │
+│   • Commodity hardware          • Specialized appliances                  │
+│   • Horizontal scaling          • Vertical scaling                        │
+│                                                                           │
+│   ════════════════════════════════════════════════════════════════════   │
+│                                                                           │
+│   MODERN CONVERGENCE:                                                     │
+│                                                                           │
+│   ┌─────────────────────────────────────────────────────────────────┐    │
+│   │  Cloud Data Platforms (BigQuery, Snowflake, Databricks)         │    │
+│   ├─────────────────────────────────────────────────────────────────┤    │
+│   │  • SQL + DataFrame APIs                                         │    │
+│   │  • Columnar storage (Parquet)                                   │    │
+│   │  • Distributed shuffle                                          │    │
+│   │  • Object storage (S3) as foundation                            │    │
+│   │  • Same engines for ETL and analytics                           │    │
+│   └─────────────────────────────────────────────────────────────────┘    │
+│                                                                           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**When to use which:**
+
+| Workload | Better fit |
+|----------|------------|
+| SQL analytics | Cloud warehouse (BigQuery, Snowflake) |
+| Complex ML pipelines | Batch framework (Spark, Ray) |
+| Row-by-row processing | Batch framework |
+| Cost-sensitive large jobs | Batch framework |
+| Iterative graph algorithms | Batch framework |
+
+---
+
+## 6. Batch Use Cases
+
+### 6.1. Extract-Transform-Load (ETL)
+
+**In plain English:** ETL is like a factory assembly line for data. Raw materials (source data) come in, get processed and quality-checked (transformed), and are packaged for shipping (loaded to destination).
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    ETL PIPELINE EXAMPLE                                   │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   EXTRACT                    TRANSFORM                    LOAD            │
+│   ───────                    ─────────                    ────            │
+│                                                                           │
+│   ┌──────────────┐          ┌──────────────┐          ┌──────────────┐   │
+│   │ Production   │          │ • Clean data │          │ Data         │   │
+│   │ Database     │────────▶ │ • Join tables│────────▶ │ Warehouse    │   │
+│   │ (PostgreSQL) │          │ • Aggregate  │          │ (Snowflake)  │   │
+│   └──────────────┘          │ • Validate   │          └──────────────┘   │
+│                             └──────────────┘                              │
+│   ┌──────────────┐                                     ┌──────────────┐   │
+│   │ Application  │          ┌──────────────┐          │ ML Feature   │   │
+│   │ Logs (S3)    │────────▶ │ • Parse JSON │────────▶ │ Store        │   │
+│   └──────────────┘          │ • Filter     │          └──────────────┘   │
+│                             │ • Enrich     │                              │
+│   ┌──────────────┐          └──────────────┘          ┌──────────────┐   │
+│   │ Third-party  │                                    │ Search       │   │
+│   │ API Exports  │─────────────────────────────────▶ │ Index        │   │
+│   └──────────────┘                                    └──────────────┘   │
+│                                                                           │
+│   Workflow scheduler (Airflow) orchestrates the pipeline                 │
+│   Runs daily/hourly, handles retries, alerts on failure                  │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why batch for ETL:**
+
+- **Parallelizable**: Filtering, projecting, and joining are embarrassingly parallel
+- **Debuggable**: Inspect failed files, fix code, rerun
+- **Retryable**: Transient failures handled by scheduler
+- **Orchestrated**: Airflow, Dagster provide operators for many systems
+
+### 6.2. Analytics
+
+Batch systems support two analytics patterns:
+
+**1. Pre-aggregation (scheduled)**
+```sql
+-- Runs daily via Airflow
+CREATE TABLE daily_sales_cube AS
+SELECT
+    date,
+    region,
+    product_category,
+    SUM(revenue) as total_revenue,
+    COUNT(*) as transactions
+FROM transactions
+WHERE date = CURRENT_DATE - 1
+GROUP BY date, region, product_category;
+```
+
+**2. Ad hoc queries (interactive)**
+```sql
+-- Analyst runs this to investigate spike
+SELECT
+    hour,
+    COUNT(*) as errors,
+    error_type
+FROM logs
+WHERE date = '2025-06-27' AND status >= 500
+GROUP BY hour, error_type
+ORDER BY errors DESC;
+```
+
+### 6.3. Machine Learning
+
+Batch processing is central to ML workflows:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    ML BATCH PROCESSING WORKFLOW                           │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│   1. FEATURE ENGINEERING                                                  │
+│   ┌─────────────────────────────────────────────────────────────────┐    │
+│   │ Raw Data → Clean → Transform → Feature Vectors                  │    │
+│   │ (text, images) → (validated) → (normalized) → (numeric arrays) │    │
+│   └─────────────────────────────────────────────────────────────────┘    │
+│                                                                           │
+│   2. MODEL TRAINING                                                       │
+│   ┌─────────────────────────────────────────────────────────────────┐    │
+│   │ Training Data → Batch Job → Model Weights                       │    │
+│   │ (features + labels) → (gradient descent) → (checkpoint files)  │    │
+│   └─────────────────────────────────────────────────────────────────┘    │
+│                                                                           │
+│   3. BATCH INFERENCE                                                      │
+│   ┌─────────────────────────────────────────────────────────────────┐    │
+│   │ New Data + Model → Batch Job → Predictions                      │    │
+│   │ (millions of rows) → (apply model) → (recommendation scores)   │    │
+│   └─────────────────────────────────────────────────────────────────┘    │
+│                                                                           │
+│   Frameworks: Spark MLlib, Ray, Kubeflow, Flyte                          │
+│   OpenAI uses Ray for ChatGPT training                                   │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**LLM data preparation** is a prime batch workload:
+- Extract plain text from HTML
+- Detect and remove duplicates
+- Filter low-quality content
+- Tokenize text into embeddings
+
+### 6.4. Bulk Data Imports
+
+Batch outputs often need to reach production databases. **Don't write directly** from batch jobs:
+
+| Problem | Why |
+|---------|-----|
+| **Slow** | Network request per record |
+| **Overwhelming** | Thousands of tasks writing simultaneously |
+| **Inconsistent** | Partial results visible if job fails |
+
+**Better patterns:**
+
+**1. Stream through Kafka**
+```
+┌─────────┐      ┌───────┐      ┌──────────────┐
+│ Batch   │─────▶│ Kafka │─────▶│ Elasticsearch│
+│ Output  │      │ Topic │      │ (throttled)  │
+└─────────┘      └───────┘      └──────────────┘
+```
+- Buffer between batch and production
+- Consumers control their read rate
+- Multiple downstream systems can consume
+
+**2. Bulk file import**
+```
+┌─────────┐      ┌───────────┐      ┌─────────────┐
+│ Batch   │─────▶│ SST Files │─────▶│ RocksDB     │
+│ Job     │      │ on S3     │      │ (bulk load) │
+└─────────┘      └───────────┘      └─────────────┘
+```
+- Build database files in batch job
+- Bulk load atomically
+- Venice, Pinot, Druid support this pattern
+
+---
+
+## 7. Summary
+
+In this chapter, we explored batch processing from Unix pipes to petabyte-scale distributed systems:
+
+**Core concepts:**
+- Batch processing transforms **immutable inputs** into **derived outputs**
+- Same patterns from Unix (`sort | uniq -c`) scale to distributed systems
+- Key operation is **shuffle**: redistribute data so same keys meet at same node
+
+**System components:**
+- **Distributed filesystems** (HDFS) and **object stores** (S3) provide storage
+- **Orchestrators** (YARN, K8s) schedule tasks across machines
+- **Workflow schedulers** (Airflow) manage job dependencies
+
+**Processing models:**
+- **MapReduce**: map → shuffle → reduce (largely obsolete)
+- **Dataflow engines** (Spark, Flink): flexible operators, in-memory intermediate data
+- **SQL** and **DataFrame APIs**: high-level, optimizable interfaces
+
+**Use cases:**
+- **ETL**: move and transform data between systems
+- **Analytics**: pre-aggregation and ad hoc queries
+- **Machine learning**: feature engineering, training, batch inference
+- **Bulk imports**: populate production systems from batch outputs
+
+> **💡 Insight**
+>
+> The key insight of batch processing is treating computation as **pure functions**: given the same input, produce the same output, with no side effects. This makes jobs reproducible, retriable, and parallelizable. When something goes wrong, you can always rerun—and that property is worth its weight in gold for building reliable systems.
+
+In Chapter 12, we'll turn to **stream processing**, where inputs are unbounded and jobs never complete. We'll see how stream processing builds on batch concepts while introducing new challenges around time, ordering, and state.
 
 ---
 
