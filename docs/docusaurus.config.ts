@@ -36,10 +36,6 @@ const config: Config = {
     locales: ['en'],
   },
 
-  markdown: {
-    format: 'md',
-  },
-
   presets: [
     [
       'classic',

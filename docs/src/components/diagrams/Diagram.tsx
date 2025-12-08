@@ -184,7 +184,7 @@ export function DiagramContainer({ children, title }: DiagramContainerProps) {
 }
 
 // ============================================
-// ProcessFlow - Step by step process
+// ProcessFlow - Step by step process (supports both APIs)
 // ============================================
 interface ProcessStep {
   title: string;
@@ -193,12 +193,56 @@ interface ProcessStep {
   color?: string;
 }
 
+interface LegacyState {
+  id: string;
+  label: string;
+  color?: string;
+  icon?: string;
+}
+
+interface LegacyTransition {
+  from: string;
+  to: string;
+  label?: string;
+}
+
 interface ProcessFlowProps {
-  steps: ProcessStep[];
+  steps?: ProcessStep[];
+  states?: LegacyState[];
+  transitions?: LegacyTransition[];
   direction?: 'horizontal' | 'vertical';
 }
 
-export function ProcessFlow({ steps, direction = 'horizontal' }: ProcessFlowProps) {
+export function ProcessFlow({ steps, states, transitions = [], direction = 'horizontal' }: ProcessFlowProps) {
+  // Legacy API: render as state machine
+  if (states && states.length > 0) {
+    return (
+      <div className={direction === 'vertical' ? styles.column : styles.row} style={{ gap: '1rem', flexWrap: 'wrap' }}>
+        {states.map((state, idx) => {
+          const transitionTo = transitions.find(t => t.from === state.id);
+          return (
+            <React.Fragment key={state.id}>
+              <Box color={state.color || colors.blue} icon={state.icon}>
+                {state.label}
+              </Box>
+              {idx < states.length - 1 && (
+                <Arrow
+                  direction={direction === 'vertical' ? 'down' : 'right'}
+                  label={transitionTo?.label}
+                />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // New API: render as process steps
+  if (!steps || steps.length === 0) {
+    return null;
+  }
+
   return (
     <div className={`${styles.processFlow} ${direction === 'vertical' ? styles.processFlowVertical : ''}`}>
       {steps.map((step, index) => (
@@ -471,6 +515,51 @@ export function ComparisonTable({
           <div className={styles.comparisonAfter}>{item.after}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ============================================
+// StateFlow - State machine diagram
+// ============================================
+interface State {
+  id: string;
+  label: string;
+  color?: string;
+  icon?: string;
+}
+
+interface Transition {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+interface StateFlowProps {
+  states: State[];
+  transitions?: Transition[];
+  direction?: 'horizontal' | 'vertical';
+}
+
+export function StateFlow({ states, transitions = [], direction = 'horizontal' }: StateFlowProps) {
+  return (
+    <div className={direction === 'vertical' ? styles.column : styles.row} style={{ gap: '1rem', flexWrap: 'wrap' }}>
+      {states.map((state, idx) => {
+        const transitionTo = transitions.find(t => t.from === state.id);
+        return (
+          <React.Fragment key={state.id}>
+            <Box color={state.color || colors.blue} icon={state.icon}>
+              {state.label}
+            </Box>
+            {idx < states.length - 1 && (
+              <Arrow
+                direction={direction === 'vertical' ? 'down' : 'right'}
+                label={transitionTo?.label}
+              />
+            )}
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }

@@ -144,10 +144,13 @@ The advantage of using an ID is that because it has no meaning to humans, it nev
 
 The downside of a normalized representation is that every time you want to display a record containing an ID, you have to do an additional lookup to resolve the ID into something human-readable. In a relational data model, this is done using a join, for example:
 
+```sql
 SELECT users.*, regions.region_name
 FROM users
 JOIN regions ON users.region_id = regions.id
 WHERE users.id = 251;
+```
+
 Document databases can store both normalized and denormalized data, but they are often associated with denormalization—partly because the JSON data model makes it easy to store additional, denormalized fields, and partly because the weak support for joins in many document databases makes normalization inconvenient. Some document databases don’t support joins at all, so you have to perform them in application code—that is, you first fetch a document containing an ID, and then perform a second query to resolve that ID into another document. In MongoDB, it is also possible to perform a join using the $lookup operator in an aggregation pipeline:
 
 ```javascript
@@ -182,11 +185,14 @@ In “Case Study: Social Network Home Timelines” we compared a normalized repr
 
 However, the implementation of materialized timelines at X (formerly Twitter) does not store the actual text of each post: each entry actually only stores the post ID, the ID of the user who posted it, and a little bit of extra information to identify reposts and replies. In other words, it is a precomputed result of (approximately) the following query:
 
+```sql
 SELECT posts.id, posts.sender_id FROM posts
   JOIN follows ON posts.sender_id = follows.followee_id
   WHERE follows.follower_id = current_user
   ORDER BY posts.timestamp DESC
   LIMIT 1000
+```
+
 This means that whenever the timeline is read, the service still needs to perform two joins: look up the post ID to fetch the actual post content (as well as statistics such as the number of likes and replies), and look up the sender’s profile by ID (to get their username, profile picture, and other details). This process of looking up the human-readable information by ID is called hydrating the IDs, and it is essentially a join performed in application code.
 
 The reason for storing only IDs in the precomputed timeline is that the data they refer to is fast-changing: the number of likes and replies may change multiple times per second on a popular post, and some users regularly change their username or profile photo. Since the timeline should show the latest like count and profile picture when it is viewed, it would not make sense to denormalize this information into the materialized timeline. Moreover, the storage cost would be increased significantly by such denormalization.
@@ -205,6 +211,8 @@ Figure 3-3. Many-to-many relationships in the relational model.
 Many-to-one and many-to-many relationships do not easily fit within one self-contained JSON document; they lend themselves more to a normalized representation. In a document model, one possible representation is given in Example 3-2 and illustrated in Figure 3-4: the data within each dotted rectangle can be grouped into one document, but the links to organizations and schools are best represented as references to other documents.
 
 Example 3-2. A résumé that references organizations by ID.
+
+```json
 {
   "user_id":    251,
   "first_name": "Barack",
@@ -212,9 +220,10 @@ Example 3-2. A résumé that references organizations by ID.
   "positions": [
     {"start": 2009, "end": 2017, "job_title": "President",         "org_id": 513},
     {"start": 2005, "end": 2008, "job_title": "US Senator (D-IL)", "org_id": 514}
-  ],
-  ...
+  ]
 }
+```
+
 ddia 0304
 Figure 3-4. Many-to-many relationships in the document model: the data within each dotted box can be grouped into one document.
 Many-to-many relationships often need to be queried in “both directions”: for example, finding all of the organizations that a particular person has worked for, and finding all of the people who have worked at a particular organization. One way of enabling such queries is to store ID references on both sides, i.e., a résumé includes the ID of each organization where the person has worked, and the organization document includes the IDs of the résumés that mention that organization. This representation is denormalized, since the relationship is stored in two places, which could become inconsistent with each other.
@@ -268,15 +277,21 @@ Schema-on-read is similar to dynamic (runtime) type checking in programming lang
 
 The difference between the approaches is particularly noticeable in situations where an application wants to change the format of its data. For example, say you are currently storing each user’s full name in one field, and you instead want to store the first name and last name separately. In a document database, you would just start writing new documents with the new fields and have code in the application that handles the case when old documents are read. For example:
 
+```javascript
 if (user && user.name && !user.first_name) {
     // Documents written before Dec 8, 2023 don't have first_name
     user.first_name = user.name.split(" ");
 }
+```
+
 The downside of this approach is that every part of your application that reads from the database now needs to deal with documents in old formats that may have been written a long time in the past. On the other hand, in a schema-on-write database, you would typically perform a migration along the lines of:
 
+```sql
 ALTER TABLE users ADD COLUMN first_name text DEFAULT NULL;
 UPDATE users SET first_name = split_part(name, ' ', 1);      -- PostgreSQL
 UPDATE users SET first_name = substring_index(name, ' ', 1);      -- MySQL
+```
+
 In most relational databases, adding a column with a default value is fast and unproblematic, even on large tables. However, running the UPDATE statement is likely to be slow on a large table, since every row needs to be rewritten, and other schema operations (such as changing the data type of a column) also typically require the entire table to be copied.
 
 Various tools exist to allow this type of schema changes to be performed in the background without downtime, but performing such migrations on large databases remains operationally challenging. Complicated migrations can be avoided by only adding the first_name column with a default value of NULL (which is fast), and filling it in at read time, like you would with a document database.
@@ -303,16 +318,19 @@ XML databases are often queried using XQuery and XPath, which are designed to al
 
 Let’s look at another example to get a feel for this language—this time an aggregation, which is especially needed for analytics. Imagine you are a marine biologist, and you add an observation record to your database every time you see animals in the ocean. Now you want to generate a report saying how many sharks you have sighted per month. In PostgreSQL you might express that query like this:
 
-SELECT date_trunc('month', observation_timestamp) AS observation_month, 1
+```sql
+SELECT date_trunc('month', observation_timestamp) AS observation_month,
        sum(num_animals) AS total_animals
 FROM observations
 WHERE family = 'Sharks'
 GROUP BY observation_month;
-1
+```
+
 The date_trunc('month', timestamp) function determines the calendar month containing timestamp, and returns another timestamp representing the beginning of that month. In other words, it rounds a timestamp down to the nearest month.
 
-This query first filters the observations to only show species in the Sharks family, then groups the observations by the calendar month in which they occurred, and finally adds up the number of animals seen in all observations in that month. The same query can be expressed using MongoDB’s aggregation pipeline as follows:
+This query first filters the observations to only show species in the Sharks family, then groups the observations by the calendar month in which they occurred, and finally adds up the number of animals seen in all observations in that month. The same query can be expressed using MongoDB's aggregation pipeline as follows:
 
+```javascript
 db.observations.aggregate([
     { $match: { family: "Sharks" } },
     { $group: {
@@ -323,6 +341,8 @@ db.observations.aggregate([
         totalAnimals: { $sum: "$numAnimals" }
     } }
 ]);
+```
+
 The aggregation pipeline language is similar in expressiveness to a subset of SQL, but it uses a JSON-based syntax rather than SQL’s English-sentence-style syntax; the difference is perhaps a matter of taste.
 
 Convergence of document and relational databases
@@ -395,6 +415,8 @@ A collection of properties (key-value pairs)
 You can think of a graph store as consisting of two relational tables, one for vertices and one for edges, as shown in Example 3-3 (this schema uses the PostgreSQL jsonb datatype to store the properties of each vertex or edge). The head and tail vertex are stored for each edge; if you want the set of incoming or outgoing edges for a vertex, you can query the edges table by head_vertex or tail_vertex, respectively.
 
 Example 3-3. Representing a property graph using a relational schema
+
+```sql
 CREATE TABLE vertices (
     vertex_id   integer PRIMARY KEY,
     label       text,
@@ -411,6 +433,8 @@ CREATE TABLE edges (
 
 CREATE INDEX edges_tails ON edges (tail_vertex);
 CREATE INDEX edges_heads ON edges (head_vertex);
+```
+
 Some important aspects of this model are:
 
 Any vertex can have an edge connecting it with any other vertex. There is no schema that restricts which kinds of things can or cannot be associated.
@@ -434,6 +458,8 @@ Cypher is a query language for property graphs, originally created for the Neo4j
 Example 3-4 shows the Cypher query to insert the lefthand portion of Figure 3-6 into a graph database. The rest of the graph can be added similarly. Each vertex is given a symbolic name like usa or idaho. That name is not stored in the database, but only used internally within the query to create edges between the vertices, using an arrow notation: (idaho) -[:WITHIN]-> (usa) creates an edge labeled WITHIN, with idaho as the tail node and usa as the head node.
 
 Example 3-4. A subset of the data in Figure 3-6, represented as a Cypher query
+
+```cypher
 CREATE
   (namerica :Location {name:'North America',  type:'continent'}),
   (usa      :Location {name:'United States',  type:'country'  }),
@@ -441,15 +467,21 @@ CREATE
   (lucy     :Person   {name:'Lucy' }),
   (idaho) -[:WITHIN ]-> (usa)  -[:WITHIN]-> (namerica),
   (lucy)  -[:BORN_IN]-> (idaho)
+```
+
 When all the vertices and edges of Figure 3-6 are added to the database, we can start asking interesting questions: for example, find the names of all the people who emigrated from the United States to Europe. That is, find all the vertices that have a BORN_IN edge to a location within the US, and also a LIVING_IN edge to a location within Europe, and return the name property of each of those vertices.
 
 Example 3-5 shows how to express that query in Cypher. The same arrow notation is used in a MATCH clause to find patterns in the graph: (person) -[:BORN_IN]-> () matches any two vertices that are related by an edge labeled BORN_IN. The tail vertex of that edge is bound to the variable person, and the head vertex is left unnamed.
 
 Example 3-5. Cypher query to find people who emigrated from the US to Europe
+
+```cypher
 MATCH
   (person) -[:BORN_IN]->  () -[:WITHIN*0..]-> (:Location {name:'United States'}),
   (person) -[:LIVES_IN]-> () -[:WITHIN*0..]-> (:Location {name:'Europe'})
 RETURN person.name
+```
+
 The query can be read as follows:
 
 Find any vertex (call it person) that meets both of the following conditions:
@@ -476,14 +508,16 @@ In Cypher, :WITHIN*0.. expresses that fact very concisely: it means “follow a 
 Since SQL:1999, this idea of variable-length traversal paths in a query can be expressed using something called recursive common table expressions (the WITH RECURSIVE syntax). Example 3-6 shows the same query—finding the names of people who emigrated from the US to Europe—expressed in SQL using this technique. However, the syntax is very clumsy in comparison to Cypher.
 
 Example 3-6. The same query as Example 3-5, written in SQL using recursive common table expressions
+
+```sql
 WITH RECURSIVE
 
   -- in_usa is the set of vertex IDs of all locations within the United States
   in_usa(vertex_id) AS (
       SELECT vertex_id FROM vertices
-        WHERE label = 'Location' AND properties->>'name' = 'United States' 1
+        WHERE label = 'Location' AND properties->>'name' = 'United States'
     UNION
-      SELECT edges.tail_vertex FROM edges 2
+      SELECT edges.tail_vertex FROM edges
         JOIN in_usa ON edges.head_vertex = in_usa.vertex_id
         WHERE edges.label = 'within'
   ),
@@ -491,7 +525,7 @@ WITH RECURSIVE
   -- in_europe is the set of vertex IDs of all locations within Europe
   in_europe(vertex_id) AS (
       SELECT vertex_id FROM vertices
-        WHERE label = 'location' AND properties->>'name' = 'Europe' 3
+        WHERE label = 'location' AND properties->>'name' = 'Europe'
     UNION
       SELECT edges.tail_vertex FROM edges
         JOIN in_europe ON edges.head_vertex = in_europe.vertex_id
@@ -499,14 +533,14 @@ WITH RECURSIVE
   ),
 
   -- born_in_usa is the set of vertex IDs of all people born in the US
-  born_in_usa(vertex_id) AS ( 4
+  born_in_usa(vertex_id) AS (
     SELECT edges.tail_vertex FROM edges
       JOIN in_usa ON edges.head_vertex = in_usa.vertex_id
       WHERE edges.label = 'born_in'
   ),
 
   -- lives_in_europe is the set of vertex IDs of all people living in Europe
-  lives_in_europe(vertex_id) AS ( 5
+  lives_in_europe(vertex_id) AS (
     SELECT edges.tail_vertex FROM edges
       JOIN in_europe ON edges.head_vertex = in_europe.vertex_id
       WHERE edges.label = 'lives_in'
@@ -515,9 +549,10 @@ WITH RECURSIVE
 SELECT vertices.properties->>'name'
 FROM vertices
 -- join to find those people who were both born in the US *and* live in Europe
-JOIN born_in_usa     ON vertices.vertex_id = born_in_usa.vertex_id 6
+JOIN born_in_usa     ON vertices.vertex_id = born_in_usa.vertex_id
 JOIN lives_in_europe ON vertices.vertex_id = lives_in_europe.vertex_id;
-1
+```
+
 First find the vertex whose name property has the value "United States", and make it the first element of the set of vertices in_usa.
 
 2
@@ -546,7 +581,7 @@ In a triple-store, all information is stored in the form of very simple three-pa
 
 The subject of a triple is equivalent to a vertex in a graph. The object is one of two things:
 
-A value of a primitive datatype, such as a string or a number. In that case, the predicate and object of the triple are equivalent to the key and value of a property on the subject vertex. Using the example from Figure 3-6, (lucy, birthYear, 1989) is like a vertex lucy with properties {"birthYear": 1989}.
+A value of a primitive datatype, such as a string or a number. In that case, the predicate and object of the triple are equivalent to the key and value of a property on the subject vertex. Using the example from Figure 3-6, (lucy, birthYear, 1989) is like a vertex lucy with properties `{"birthYear": 1989}`.
 
 Another vertex in the graph. In that case, the predicate is an edge in the graph, the subject is the tail vertex, and the object is the head vertex. For example, in (lucy, marriedTo, alain) the subject and object lucy and alain are both vertices, and the predicate marriedTo is the label of the edge that connects them.
 
@@ -556,6 +591,8 @@ To be precise, databases that offer a triple-like data model often need to store
 Example 3-7 shows the same data as in Example 3-4, written as triples in a format called Turtle, a subset of Notation3 (N3).
 
 Example 3-7. A subset of the data in Figure 3-6, represented as Turtle triples
+
+```turtle
 @prefix : <urn:example:>.
 _:lucy     a       :Person.
 _:lucy     :name   "Lucy".
@@ -571,16 +608,22 @@ _:usa      :within _:namerica.
 _:namerica a       :Location.
 _:namerica :name   "North America".
 _:namerica :type   "continent".
+```
+
 In this example, vertices of the graph are written as _:someName. The name doesn’t mean anything outside of this file; it exists only because we otherwise wouldn’t know which triples refer to the same vertex. When the predicate represents an edge, the object is a vertex, as in _:idaho :within _:usa. When the predicate is a property, the object is a string literal, as in _:usa :name "United States".
 
 It’s quite repetitive to repeat the same subject over and over again, but fortunately you can use semicolons to say multiple things about the same subject. This makes the Turtle format quite readable: see Example 3-8.
 
 Example 3-8. A more concise way of writing the data in Example 3-7
+
+```turtle
 @prefix : <urn:example:>.
 _:lucy     a :Person;   :name "Lucy";          :bornIn _:idaho.
 _:idaho    a :Location; :name "Idaho";         :type "state";   :within _:usa.
 _:usa      a :Location; :name "United States"; :type "country"; :within _:namerica.
 _:namerica a :Location; :name "North America"; :type "continent".
+```
+
 The Semantic Web
 Some of the research and development effort on triple stores was motivated by the Semantic Web, an early-2000s effort to facilitate internet-wide data exchange by publishing data not only as human-readable web pages, but also in a standardized, machine-readable format. Although the Semantic Web as originally envisioned did not succeed, the legacy of the Semantic Web project lives on in a couple of specific technologies: linked data standards such as JSON-LD, ontologies used in biomedical science, Facebook’s Open Graph protocol (which is used for link unfurling), knowledge graphs such as Wikidata, and standardized vocabularies for structured data maintained by schema.org.
 
@@ -590,6 +633,8 @@ The RDF data model
 The Turtle language we used in Example 3-8 is actually a way of encoding data in the Resource Description Framework (RDF), a data model that was designed for the Semantic Web. RDF data can also be encoded in other ways, for example (more verbosely) in XML, as shown in Example 3-9. Tools like Apache Jena can automatically convert between different RDF encodings.
 
 Example 3-9. The data of Example 3-8, expressed using RDF/XML syntax
+
+```xml
 <rdf:RDF xmlns="urn:example:"
     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 
@@ -615,9 +660,11 @@ Example 3-9. The data of Example 3-8, expressed using RDF/XML syntax
     <bornIn rdf:nodeID="idaho"/>
   </Person>
 </rdf:RDF>
-RDF has a few quirks due to the fact that it is designed for internet-wide data exchange. The subject, predicate, and object of a triple are often URIs. For example, a predicate might be an URI such as <http://my-company.com/namespace#within> or <http://my-company.com/namespace#lives_in>, rather than just WITHIN or LIVES_IN. The reasoning behind this design is that you should be able to combine your data with someone else’s data, and if they attach a different meaning to the word within or lives_in, you won’t get a conflict because their predicates are actually <http://other.org/foo#within> and <http://other.org/foo#lives_in>.
+```
 
-The URL <http://my-company.com/namespace> doesn’t necessarily need to resolve to anything—from RDF’s point of view, it is simply a namespace. To avoid potential confusion with http:// URLs, the examples in this section use non-resolvable URIs such as urn:example:within. Fortunately, you can just specify this prefix once at the top of the file, and then forget about it.
+RDF has a few quirks due to the fact that it is designed for internet-wide data exchange. The subject, predicate, and object of a triple are often URIs. For example, a predicate might be an URI such as `<http://my-company.com/namespace#within>` or `<http://my-company.com/namespace#lives_in>`, rather than just WITHIN or LIVES_IN. The reasoning behind this design is that you should be able to combine your data with someone else's data, and if they attach a different meaning to the word within or lives_in, you won't get a conflict because their predicates are actually `<http://other.org/foo#within>` and `<http://other.org/foo#lives_in>`.
+
+The URL `<http://my-company.com/namespace>` doesn't necessarily need to resolve to anything—from RDF's point of view, it is simply a namespace. To avoid potential confusion with http:// URLs, the examples in this section use non-resolvable URIs such as urn:example:within. Fortunately, you can just specify this prefix once at the top of the file, and then forget about it.
 
 The SPARQL query language
 SPARQL is a query language for triple-stores using the RDF data model. (It is an acronym for SPARQL Protocol and RDF Query Language, pronounced “sparkle.”) It predates Cypher, and since Cypher’s pattern matching is borrowed from SPARQL, they look quite similar.
@@ -625,6 +672,8 @@ SPARQL is a query language for triple-stores using the RDF data model. (It is an
 The same query as before—finding people who have moved from the US to Europe—is similarly concise in SPARQL as it is in Cypher (see Example 3-10).
 
 Example 3-10. The same query as Example 3-5, expressed in SPARQL
+
+```sparql
 PREFIX : <urn:example:>
 
 SELECT ?personName WHERE {
@@ -632,16 +681,24 @@ SELECT ?personName WHERE {
   ?person :bornIn  / :within* / :name "United States".
   ?person :livesIn / :within* / :name "Europe".
 }
+```
+
 The structure is very similar. The following two expressions are equivalent (variables start with a question mark in SPARQL):
 
+```
 (person) -[:BORN_IN]-> () -[:WITHIN*0..]-> (location)   # Cypher
 
 ?person :bornIn / :within* ?location.                   # SPARQL
-Because RDF doesn’t distinguish between properties and edges but just uses predicates for both, you can use the same syntax for matching properties. In the following expression, the variable usa is bound to any vertex that has a name property whose value is the string "United States":
+```
 
+Because RDF doesn't distinguish between properties and edges but just uses predicates for both, you can use the same syntax for matching properties. In the following expression, the variable usa is bound to any vertex that has a name property whose value is the string "United States":
+
+```
 (usa {name:'United States'})   # Cypher
 
 ?usa :name "United States".    # SPARQL
+```
+
 SPARQL is supported by Amazon Neptune, AllegroGraph, Blazegraph, OpenLink Virtuoso, Apache Jena, and various other triple stores.
 
 Datalog: Recursive Relational Queries
@@ -654,6 +711,8 @@ The contents of a Datalog database consists of facts, and each fact corresponds 
 Example 3-11 shows how to write the data from the left-hand side of Figure 3-6 in Datalog. The edges of the graph (within, born_in, and lives_in) are represented as two-column join tables. For example, Lucy has the ID 100 and Idaho has the ID 3, so the relationship “Lucy was born in Idaho” is represented as born_in(100, 3).
 
 Example 3-11. A subset of the data in Figure 3-6, represented as Datalog facts
+
+```prolog
 location(1, "North America", "continent").
 location(2, "United States", "country").
 location(3, "Idaho", "state").
@@ -663,9 +722,13 @@ within(3, 2).    /* Idaho is in the US     */
 
 person(100, "Lucy").
 born_in(100, 3). /* Lucy was born in Idaho */
+```
+
 Now that we have defined the data, we can write the same query as before, as shown in Example 3-12. It looks a bit different from the equivalent in Cypher or SPARQL, but don’t let that put you off. Datalog is a subset of Prolog, a programming language that you might have seen before if you’ve studied computer science.
 
 Example 3-12. The same query as Example 3-5, expressed in Datalog
+
+```prolog
 within_recursive(LocID, PlaceName) :- location(LocID, PlaceName, _). /* Rule 1 */
 
 within_recursive(LocID, PlaceName) :- within(LocID, ViaID),          /* Rule 2 */
@@ -679,6 +742,8 @@ migrated(PName, BornIn, LivingIn)  :- person(PersonID, PName),       /* Rule 3 *
 
 us_to_europe(Person) :- migrated(Person, "United States", "Europe"). /* Rule 4 */
 /* us_to_europe contains the row "Lucy". */
+```
+
 Cypher and SPARQL jump in right away with SELECT, but Datalog takes a small step at a time. We define rules that derive new virtual tables from the underlying facts. These derived tables are like (virtual) SQL views: they are not stored in the database, but you can query them in the same way as a table containing stored facts.
 
 In Example 3-12 we define three derived tables: within_recursive, migrated, and us_to_europe. The name and columns of the virtual tables are defined by what appears before the :- symbol of each rule. For example, migrated(PName, BornIn, LivingIn) is a virtual table with three columns: the name of a person, the name of the place where they were born, and the name of the place where they are living.
@@ -709,6 +774,8 @@ GraphQL’s flexibility comes at a cost. Organizations that adopt GraphQL often 
 Nevertheless, GraphQL is useful. Example 3-13 shows how you might implement a group chat application such as Discord or Slack using GraphQL. The query requests all the channels that the user has access to, including the channel name and the 50 most recent messages in each channel. For each message it requests the timestamp, the message content, and the name and profile picture URL for the sender of the message. Moreover, if a message is a reply to another message, the query also requests the sender name and the content of the message it is replying to (which might be rendered in a smaller font above the reply, in order to provide some context).
 
 Example 3-13. Example GraphQL query for a group chat application
+
+```graphql
 query ChatApp {
   channels {
     name
@@ -728,9 +795,13 @@ query ChatApp {
     }
   }
 }
+```
+
 Example 3-14 shows what a response to the query in Example 3-13 might look like. The response is a JSON document that mirrors the structure of the query: it contains exactly those attributes that were requested, no more and no less. This approach has the advantage that the server does not need to know which attributes the client requires in order to render the user interface; instead, the client can simply request what it needs. For example, this query does not request a profile picture URL for the sender of the replyTo message, but if the user interface were changed to add that profile picture, it would be easy for the client to add the required imageUrl attribute to the query without changing the server.
 
 Example 3-14. A possible response to the query in Example 3-13
+
+```json
 {
   "data": {
     "channels": [
@@ -751,8 +822,13 @@ Example 3-14. A possible response to the query in Example 3-13
               "content": "Hey! How are y'all doing?",
               "sender": {"fullName": "Aaliyah"}
             }
-          },
-          ...
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 In Example 3-14 the name and image URL of a message sender is embedded directly in the message object. If the same user sends multiple messages, this information is repeated on each message. In principle, it would be possible to reduce this duplication, but GraphQL makes the design choice to accept a larger response size in order to make it simpler to render the user interface based on the data.
 
 The replyTo field is similar: in Example 3-14, the second message is a reply to the first, and the content (“Hey!…”) and sender Aaliyah are duplicated under replyTo. It would be possible to instead return the ID of the message being replied to, but then the client would have to make an additional request to the server if that ID is not among the 50 most recent messages returned. Duplicating the content makes it much simpler to work with the data.

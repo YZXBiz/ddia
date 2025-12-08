@@ -153,6 +153,7 @@ Protocol Buffers (protobuf) is a binary encoding library developed at Google. It
 
 Protocol Buffers requires a schema for any data that is encoded. To encode the data in Example 5-2 in Protocol Buffers, you would describe the schema in the Protocol Buffers interface definition language (IDL) like this:
 
+```protobuf
 syntax = "proto3";
 
 message Person {
@@ -160,6 +161,8 @@ message Person {
     int64 favorite_number = 2;
     repeated string interests = 3;
 }
+```
+
 Protocol Buffers comes with a code generation tool that takes a schema definition like the one shown here, and produces classes that implement the schema in various programming languages. Your application code can call this generated code to encode or decode records of the schema. The schema language is very simple compared to JSON Schema: it only defines the fields of records and their types, but it does not support other restrictions on the possible values of fields.
 
 Encoding Example 5-2 using a Protocol Buffers encoder requires 33 bytes, as shown in Figure 5-3.
@@ -194,13 +197,17 @@ Avro also uses a schema to specify the structure of the data being encoded. It h
 
 Our example schema, written in Avro IDL, might look like this:
 
+```
 record Person {
     string               userName;
     union { null, long } favoriteNumber = null;
     array<string>        interests;
 }
+```
+
 The equivalent JSON representation of that schema is as follows:
 
+```json
 {
     "type": "record",
     "name": "Person",
@@ -210,6 +217,8 @@ The equivalent JSON representation of that schema is as follows:
         {"name": "interests",      "type": {"type": "array", "items": "string"}}
     ]
 }
+```
+
 First of all, notice that there are no tag numbers in the schema. If we encode our example record (Example 5-2) using this schema, the Avro binary encoding is just 32 bytes long—the most compact of all the encodings we have seen. The breakdown of the encoded byte sequence is shown in Figure 5-4.
 
 If you examine the byte sequence, you can see that there is nothing to identify fields or their datatypes. The encoding simply consists of values concatenated together. A string is just a length prefix followed by UTF-8 bytes, but there’s nothing in the encoded data that tells you that it is a string. It could just as well be an integer, or something else entirely. An integer is encoded using a variable-length encoding.
@@ -240,7 +249,7 @@ To maintain compatibility, you may only add or remove a field that has a default
 
 If you were to add a field that has no default value, new readers wouldn’t be able to read data written by old writers, so you would break backward compatibility. If you were to remove a field that has no default value, old readers wouldn’t be able to read data written by new writers, so you would break forward compatibility.
 
-In some programming languages, null is an acceptable default for any variable, but this is not the case in Avro: if you want to allow a field to be null, you have to use a union type. For example, union { null, long, string } field; indicates that field can be a number, or a string, or null. You can only use null as a default value if it is the first branch of the union. This is a little more verbose than having everything nullable by default, but it helps prevent bugs by being explicit about what can and cannot be null.
+In some programming languages, null is an acceptable default for any variable, but this is not the case in Avro: if you want to allow a field to be null, you have to use a union type. For example, `union { null, long, string } field;` indicates that field can be a number, or a string, or null. You can only use null as a default value if it is the first branch of the union. This is a little more verbose than having everything nullable by default, but it helps prevent bugs by being explicit about what can and cannot be null.
 
 Changing the datatype of a field is possible, provided that Avro can convert the type. Changing the name of a field is possible but a little tricky: the reader’s schema can contain aliases for field names, so it can match an old writer’s schema field names against the aliases. This means that changing a field name is backward compatible but not forward compatible. Similarly, adding a branch to a union type is backward compatible but not forward compatible.
 

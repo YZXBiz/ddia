@@ -20,5 +20,6 @@ export {
   ConnectionDiagram,
   StackDiagram,
   ComparisonTable,
+  StateFlow,
   colors
 } from './Diagram';
