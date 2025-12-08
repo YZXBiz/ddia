@@ -1,6 +1,6 @@
 ---
 sidebar_position: 1
-title: "Replication"
+title: "Chapter 6. Replication"
 description: "Understanding data replication across multiple nodes in distributed systems"
 ---
 

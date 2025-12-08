@@ -4,6 +4,8 @@ title: "Chapter 3. Data Models and Query Languages"
 description: "Exploring different data models including relational, document, graph, and their trade-offs"
 ---
 
+import { Box, Arrow, Row, Column, Group, DiagramContainer, ProcessFlow, TreeDiagram, CardGrid, ConnectionDiagram, StackDiagram, ComparisonTable, StateFlow, colors } from '@site/src/components/diagrams';
+
 # Chapter 3. Data Models and Query Languages
 
 > The limits of my language mean the limits of my world.
@@ -53,41 +55,35 @@ description: "Exploring different data models including relational, document, gr
 
 Most applications are built by layering one data model on top of another:
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    DATA MODEL ABSTRACTION LAYERS                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│   LAYER 1: Application Domain                                           │
-│   ┌────────────────────────────────────────────────────────────────┐    │
-│   │ Real world: people, organizations, goods, actions, sensors     │    │
-│   │ Modeled as: Objects, data structures, APIs                     │    │
-│   └──────────────────────────┬─────────────────────────────────────┘    │
-│                              │                                           │
-│                              ▼                                           │
-│   LAYER 2: General-Purpose Data Model                                   │
-│   ┌────────────────────────────────────────────────────────────────┐    │
-│   │ Expressed as: JSON/XML documents, relational tables,           │    │
-│   │              graph vertices/edges                              │    │
-│   └──────────────────────────┬─────────────────────────────────────┘    │
-│                              │                                           │
-│                              ▼                                           │
-│   LAYER 3: Storage Representation                                       │
-│   ┌────────────────────────────────────────────────────────────────┐    │
-│   │ Represented as: Bytes in memory, on disk, over network         │    │
-│   │ Enables: Querying, searching, manipulation                     │    │
-│   └──────────────────────────┬─────────────────────────────────────┘    │
-│                              │                                           │
-│                              ▼                                           │
-│   LAYER 4: Hardware Representation                                      │
-│   ┌────────────────────────────────────────────────────────────────┐    │
-│   │ Represented as: Electrical currents, magnetic fields,          │    │
-│   │                pulses of light                                 │    │
-│   └────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│   Each layer hides complexity below by providing a clean abstraction    │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="DATA MODEL ABSTRACTION LAYERS">
+  <StackDiagram
+    layers={[
+      {
+        label: "LAYER 1: Application Domain",
+        color: colors.blue,
+        items: ["Real world: people, organizations, goods, actions, sensors", "Modeled as: Objects, data structures, APIs"]
+      },
+      {
+        label: "LAYER 2: General-Purpose Data Model",
+        color: colors.purple,
+        items: ["Expressed as: JSON/XML documents, relational tables, graph vertices/edges"]
+      },
+      {
+        label: "LAYER 3: Storage Representation",
+        color: colors.green,
+        items: ["Represented as: Bytes in memory, on disk, over network", "Enables: Querying, searching, manipulation"]
+      },
+      {
+        label: "LAYER 4: Hardware Representation",
+        color: colors.orange,
+        items: ["Represented as: Electrical currents, magnetic fields, pulses of light"]
+      }
+    ]}
+  />
+  <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+    Each layer hides complexity below by providing a clean abstraction
+  </div>
+</DiagramContainer>
 
 > **💡 Insight**
 >
@@ -146,26 +142,37 @@ The relational model was originally theoretical, and many doubted it could be im
 
 **The evolution of database buzzwords:**
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    EVOLUTION OF DATA MODELS                              │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│   1970s-1980s                 1980s-1990s              2010s             │
-│   ─────────────               ────────────             ─────             │
-│                                                                          │
-│   Network Model               Object DBs               NoSQL             │
-│   Hierarchical Model          XML DBs                  NewSQL            │
-│        ↓                           ↓                       ↓             │
-│   Dominated by                Niche adoption           Document DBs      │
-│   Relational Model            SQL absorbs ideas        (MongoDB)         │
-│   (SQL wins)                  (JSON, XML support)      Graph DBs         │
-│                                                         (Neo4j)          │
-│                                                                          │
-│   Each competitor generated hype, but SQL adapted and survived           │
-│   SQL today: Relational core + JSON + XML + Graph support               │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="EVOLUTION OF DATA MODELS">
+  <Column gap="lg">
+    <Row gap="lg" wrap={true}>
+      <Group title="1970s-1980s" color={colors.blue}>
+        <Box color={colors.blue} variant="subtle">Network Model</Box>
+        <Box color={colors.blue} variant="subtle">Hierarchical Model</Box>
+        <Arrow direction="down" label="Dominated by" />
+        <Box color={colors.blue}>Relational Model (SQL wins)</Box>
+      </Group>
+
+      <Group title="1980s-1990s" color={colors.purple}>
+        <Box color={colors.purple} variant="subtle">Object DBs</Box>
+        <Box color={colors.purple} variant="subtle">XML DBs</Box>
+        <Arrow direction="down" label="Niche adoption" />
+        <Box color={colors.purple}>SQL absorbs ideas (JSON, XML support)</Box>
+      </Group>
+
+      <Group title="2010s" color={colors.green}>
+        <Box color={colors.green} variant="subtle">NoSQL</Box>
+        <Box color={colors.green} variant="subtle">NewSQL</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>Document DBs (MongoDB)</Box>
+        <Box color={colors.green}>Graph DBs (Neo4j)</Box>
+      </Group>
+    </Row>
+    <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+      Each competitor generated hype, but SQL adapted and survived<br/>
+      SQL today: Relational core + JSON + XML + Graph support
+    </div>
+  </Column>
+</DiagramContainer>
 
 > **💡 Insight**
 >
@@ -215,38 +222,62 @@ Let's compare how a LinkedIn profile looks in relational vs. document models:
 
 **Relational approach:**
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    RELATIONAL SCHEMA FOR RESUME                           │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   users                          positions                                │
-│   ┌─────────────────┐           ┌──────────────────────────┐            │
-│   │ user_id         │───────┐   │ position_id              │            │
-│   │ first_name      │       │   │ user_id (FK)             │            │
-│   │ last_name       │       └──▶│ job_title                │            │
-│   │ headline        │           │ organization             │            │
-│   │ region_id (FK)  │           └──────────────────────────┘            │
-│   │ photo_url       │                                                    │
-│   └─────────────────┘           education                                │
-│                                  ┌──────────────────────────┐            │
-│   regions                   ┌───│ education_id             │            │
-│   ┌─────────────────┐       │   │ user_id (FK)             │            │
-│   │ region_id       │       │   │ school_name              │            │
-│   │ region_name     │       │   │ start_year               │            │
-│   └─────────────────┘       │   │ end_year                 │            │
-│                             │   └──────────────────────────┘            │
-│                             │                                            │
-│   contact_info              │                                            │
-│   ┌─────────────────┐       │                                            │
-│   │ user_id (FK)    │───────┘                                            │
-│   │ website         │                                                    │
-│   │ twitter         │                                                    │
-│   └─────────────────┘                                                    │
-│                                                                           │
-│   To fetch a profile: Multiple queries or messy multi-way join           │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="RELATIONAL SCHEMA FOR RESUME">
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+    <Row gap="lg" wrap={true}>
+      <Group title="users" color={colors.blue}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          user_id<br/>
+          first_name<br/>
+          last_name<br/>
+          headline<br/>
+          region_id (FK)<br/>
+          photo_url
+        </div>
+      </Group>
+
+      <Group title="positions" color={colors.purple}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          position_id<br/>
+          user_id (FK)<br/>
+          job_title<br/>
+          organization
+        </div>
+      </Group>
+    </Row>
+
+    <Row gap="lg" wrap={true}>
+      <Group title="regions" color={colors.green}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          region_id<br/>
+          region_name
+        </div>
+      </Group>
+
+      <Group title="education" color={colors.orange}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          education_id<br/>
+          user_id (FK)<br/>
+          school_name<br/>
+          start_year<br/>
+          end_year
+        </div>
+      </Group>
+
+      <Group title="contact_info" color={colors.cyan}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          user_id (FK)<br/>
+          website<br/>
+          twitter
+        </div>
+      </Group>
+    </Row>
+
+    <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+      To fetch a profile: Multiple queries or messy multi-way join
+    </div>
+  </div>
+</DiagramContainer>
 
 **Document approach (JSON):**
 
@@ -275,25 +306,43 @@ Let's compare how a LinkedIn profile looks in relational vs. document models:
 
 **Tree structure visualization:**
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                ONE-TO-MANY AS TREE STRUCTURE                              │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│                          User: Barack Obama                               │
-│                                  │                                        │
-│                    ┌─────────────┼─────────────┐                         │
-│                    │             │             │                         │
-│                    ▼             ▼             ▼                         │
-│              positions      education    contact_info                    │
-│                  │               │             │                         │
-│            ┌─────┴─────┐    ┌───┴───┐    ┌────┴────┐                    │
-│            ▼           ▼    ▼       ▼    ▼         ▼                    │
-│        President   Senator Harvard Columbia website twitter              │
-│                                                                           │
-│   JSON makes tree structure explicit; relational "shreds" it into tables │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="ONE-TO-MANY AS TREE STRUCTURE">
+  <TreeDiagram
+    root={{
+      label: "User: Barack Obama",
+      color: colors.blue,
+      children: [
+        {
+          label: "positions",
+          color: colors.purple,
+          children: [
+            { label: "President", color: colors.purple },
+            { label: "Senator", color: colors.purple }
+          ]
+        },
+        {
+          label: "education",
+          color: colors.green,
+          children: [
+            { label: "Harvard", color: colors.green },
+            { label: "Columbia", color: colors.green }
+          ]
+        },
+        {
+          label: "contact_info",
+          color: colors.orange,
+          children: [
+            { label: "website", color: colors.orange },
+            { label: "twitter", color: colors.orange }
+          ]
+        }
+      ]
+    }}
+  />
+  <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+    JSON makes tree structure explicit; relational "shreds" it into tables
+  </div>
+</DiagramContainer>
 
 **Advantages of JSON representation:**
 
@@ -393,24 +442,38 @@ This shows that **denormalization isn't all-or-nothing**—you denormalize some 
 
 Use an **associative table** (join table):
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    MANY-TO-MANY IN RELATIONAL MODEL                       │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   users                      positions                   organizations    │
-│   ┌──────────┐              ┌──────────┐                ┌──────────┐     │
-│   │ user_id  │              │ user_id  │                │  org_id  │     │
-│   │ name     │──────────┐   │ org_id   │   ┌───────────│  name    │     │
-│   └──────────┘          │   │ title    │   │           │  logo    │     │
-│                         └──▶│ start    │◀──┘           └──────────┘     │
-│                             │ end      │                                 │
-│                             └──────────┘                                 │
-│                                                                           │
-│   The positions table connects users to organizations                    │
-│   Each row represents one person's employment at one company             │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="MANY-TO-MANY IN RELATIONAL MODEL">
+  <Row gap="lg" wrap={true}>
+    <Group title="users" color={colors.blue}>
+      <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+        user_id<br/>
+        name
+      </div>
+    </Group>
+
+    <Group title="positions (join table)" color={colors.purple}>
+      <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+        user_id<br/>
+        org_id<br/>
+        title<br/>
+        start<br/>
+        end
+      </div>
+    </Group>
+
+    <Group title="organizations" color={colors.green}>
+      <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+        org_id<br/>
+        name<br/>
+        logo
+      </div>
+    </Group>
+  </Row>
+  <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+    The positions table connects users to organizations<br/>
+    Each row represents one person's employment at one company
+  </div>
+</DiagramContainer>
 
 **Document model:**
 
@@ -426,31 +489,28 @@ Use an **associative table** (join table):
 }
 ```
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                MANY-TO-MANY IN DOCUMENT MODEL                             │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   ┌─────────────────────────────────────────────────────┐                │
-│   │  User Document (Barack Obama)                       │                │
-│   │  ─────────────────────────────────                  │                │
-│   │  • positions: [org_id: 513, org_id: 514]            │                │
-│   └──────────────────────┬──────────────────────────────┘                │
-│                          │                                                │
-│                          │ references                                     │
-│                          │                                                │
-│                          ▼                                                │
-│   ┌─────────────────────────────────────────────────────┐                │
-│   │  Organization Documents                             │                │
-│   │  ──────────────────────                             │                │
-│   │  513: {name: "United States of America"}            │                │
-│   │  514: {name: "United States Senate"}                │                │
-│   └─────────────────────────────────────────────────────┘                │
-│                                                                           │
-│   Data within dotted boxes = one document                                │
-│   Links to organizations = references to other documents                 │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="MANY-TO-MANY IN DOCUMENT MODEL">
+  <Column align="center">
+    <Group title="User Document (Barack Obama)" color={colors.blue}>
+      <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+        • positions: [org_id: 513, org_id: 514]
+      </div>
+    </Group>
+
+    <Arrow direction="down" label="references" />
+
+    <Group title="Organization Documents" color={colors.green}>
+      <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+        513: &#123;name: "United States of America"&#125;<br/>
+        514: &#123;name: "United States Senate"&#125;
+      </div>
+    </Group>
+  </Column>
+  <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+    Data within boxes = one document<br/>
+    Links to organizations = references to other documents
+  </div>
+</DiagramContainer>
 
 **Querying in both directions:**
 
@@ -628,35 +688,49 @@ db.observations.aggregate([
 
 **Evolution of both models:**
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    CONVERGENCE OF DATA MODELS                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│   2000s: SEPARATED                                                       │
-│   ───────────────────                                                    │
-│                                                                          │
-│   Relational DB              Document DB                                 │
-│   ────────────               ───────────                                 │
-│   • Rigid schemas            • Flexible schemas                          │
-│   • SQL only                 • No joins                                  │
-│   • Tables                   • JSON documents                            │
-│                                                                          │
-│   ════════════════════════════════════════════════════════════════════  │
-│                                                                          │
-│   2020s: CONVERGED                                                       │
-│   ──────────────                                                         │
-│                                                                          │
-│   Modern Databases                                                       │
-│   ─────────────────                                                      │
-│   • PostgreSQL: JSON columns, JSON queries, JSON indexes                │
-│   • MongoDB: $lookup (joins), secondary indexes, aggregation            │
-│   • MySQL: JSON datatype, JSON functions                                │
-│   • RethinkDB: ReQL with joins                                          │
-│                                                                          │
-│   Best of both worlds: Schema where needed, flexibility where needed    │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="CONVERGENCE OF DATA MODELS">
+  <Column gap="lg">
+    <div>
+      <h4 style={{ color: colors.blue }}>2000s: SEPARATED</h4>
+      <Row gap="lg" wrap={true}>
+        <Group title="Relational DB" color={colors.blue}>
+          <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+            • Rigid schemas<br/>
+            • SQL only<br/>
+            • Tables
+          </div>
+        </Group>
+        <Group title="Document DB" color={colors.green}>
+          <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+            • Flexible schemas<br/>
+            • No joins<br/>
+            • JSON documents
+          </div>
+        </Group>
+      </Row>
+    </div>
+
+    <div style={{ textAlign: 'center', fontSize: '1.5rem', color: colors.slate }}>
+      ═══════════════════════════════
+    </div>
+
+    <div>
+      <h4 style={{ color: colors.purple }}>2020s: CONVERGED</h4>
+      <Group title="Modern Databases" color={colors.purple}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          • PostgreSQL: JSON columns, JSON queries, JSON indexes<br/>
+          • MongoDB: $lookup (joins), secondary indexes, aggregation<br/>
+          • MySQL: JSON datatype, JSON functions<br/>
+          • RethinkDB: ReQL with joins
+        </div>
+      </Group>
+    </div>
+
+    <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+      Best of both worlds: Schema where needed, flexibility where needed
+    </div>
+  </Column>
+</DiagramContainer>
 
 > **💡 Insight**
 >
@@ -693,60 +767,48 @@ A graph has two types of objects:
 
 **Example graph:**
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    EXAMPLE GRAPH STRUCTURE                                │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   Person: Lucy                    Person: Alain                           │
-│   ┌─────────────┐                ┌─────────────┐                         │
-│   │ name: Lucy  │                │ name: Alain │                         │
-│   │ born: Idaho │                │ born: France│                         │
-│   └──────┬──────┘                └──────┬──────┘                         │
-│          │                              │                                │
-│          │ BORN_IN        MARRIED_TO    │ BORN_IN                        │
-│          │              ┌───────────────┤                                │
-│          ▼              │               ▼                                │
-│   ┌─────────────┐       │        ┌─────────────┐                         │
-│   │Idaho (state)│       │        │Normandy     │                         │
-│   └──────┬──────┘       │        └──────┬──────┘                         │
-│          │              │               │                                │
-│          │ WITHIN       │               │ WITHIN                         │
-│          ▼              │               ▼                                │
-│   ┌─────────────┐       │        ┌─────────────┐                         │
-│   │United States│       │        │France       │                         │
-│   └──────┬──────┘       │        └──────┬──────┘                         │
-│          │              │               │                                │
-│          │ WITHIN       │               │ WITHIN                         │
-│          ▼              │               ▼                                │
-│   ┌─────────────┐       │        ┌─────────────┐                         │
-│   │North America│       │        │Europe       │                         │
-│   └─────────────┘       │        └─────────────┘                         │
-│                         │                                                │
-│                         │ LIVES_IN                                       │
-│                         ▼                                                │
-│                  ┌─────────────┐                                         │
-│                  │London (city)│                                         │
-│                  └──────┬──────┘                                         │
-│                         │                                                │
-│                         │ WITHIN                                         │
-│                         ▼                                                │
-│                  ┌─────────────┐                                         │
-│                  │United Kingdom│                                        │
-│                  └──────┬──────┘                                         │
-│                         │                                                │
-│                         │ WITHIN                                         │
-│                         ▼                                                │
-│                  ┌─────────────┐                                         │
-│                  │Europe       │                                         │
-│                  └─────────────┘                                         │
-│                                                                           │
-│   This graph shows:                                                      │
-│   • Different types of vertices (people, cities, countries)              │
-│   • Different types of edges (BORN_IN, LIVES_IN, WITHIN, MARRIED_TO)    │
-│   • Hierarchical location data (varying granularity)                     │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="EXAMPLE GRAPH STRUCTURE">
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+    <Row gap="lg" wrap={true}>
+      <Column align="center">
+        <Box color={colors.blue}>Lucy<br/><small>born: Idaho</small></Box>
+        <Arrow direction="down" label="BORN_IN" />
+        <Box color={colors.green}>Idaho (state)</Box>
+        <Arrow direction="down" label="WITHIN" />
+        <Box color={colors.green}>United States</Box>
+        <Arrow direction="down" label="WITHIN" />
+        <Box color={colors.green}>North America</Box>
+      </Column>
+
+      <Column align="center">
+        <Box color={colors.blue}>Alain<br/><small>born: France</small></Box>
+        <Arrow direction="down" label="BORN_IN" />
+        <Box color={colors.green}>Normandy</Box>
+        <Arrow direction="down" label="WITHIN" />
+        <Box color={colors.green}>France</Box>
+        <Arrow direction="down" label="WITHIN" />
+        <Box color={colors.green}>Europe</Box>
+      </Column>
+
+      <Column align="center">
+        <Box color={colors.blue}>Alain & Lucy</Box>
+        <Arrow direction="down" label="LIVES_IN" />
+        <Box color={colors.orange}>London (city)</Box>
+        <Arrow direction="down" label="WITHIN" />
+        <Box color={colors.orange}>United Kingdom</Box>
+        <Arrow direction="down" label="WITHIN" />
+        <Box color={colors.orange}>Europe</Box>
+      </Column>
+    </Row>
+
+    <div style={{ marginTop: '1rem', fontSize: '0.9rem', color: colors.slate }}>
+      This graph shows:<br/>
+      • Different types of vertices (people, cities, countries)<br/>
+      • Different types of edges (BORN_IN, LIVES_IN, WITHIN, MARRIED_TO)<br/>
+      • Hierarchical location data (varying granularity)
+    </div>
+  </div>
+</DiagramContainer>
 
 > **💡 Insight**
 >
@@ -845,28 +907,25 @@ RETURN person.name
 
 **Pattern explanation:**
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    CYPHER PATTERN MATCHING                                │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   Pattern: (person) -[:BORN_IN]-> () -[:WITHIN*0..]-> (:Location {...})  │
-│                                                                           │
-│   (person)              Variable binding to person vertex                 │
-│   -[:BORN_IN]->         Follow outgoing edge labeled BORN_IN            │
-│   ()                    Anonymous vertex (don't care about details)      │
-│   -[:WITHIN*0..]->      Follow 0 or more WITHIN edges                   │
-│   (:Location {...})     Must end at Location with name="United States"   │
-│                                                                           │
-│   Execution:                                                              │
-│   1. Find person vertex                                                  │
-│   2. Follow BORN_IN edge to birthplace                                   │
-│   3. Follow chain of WITHIN edges up hierarchy                           │
-│   4. Check if chain reaches "United States"                              │
-│   5. Repeat for LIVES_IN edge checking if it reaches "Europe"            │
-│   6. Return person.name if both conditions met                           │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="CYPHER PATTERN MATCHING">
+  <div style={{ fontSize: '0.9rem', lineHeight: '1.8' }}>
+    <strong>Pattern:</strong> (person) -[:BORN_IN]-&gt; () -[:WITHIN*0..]-&gt; (:Location &#123;...&#125;)
+    <br/><br/>
+    <strong>(person)</strong> — Variable binding to person vertex<br/>
+    <strong>-[:BORN_IN]-&gt;</strong> — Follow outgoing edge labeled BORN_IN<br/>
+    <strong>()</strong> — Anonymous vertex (don't care about details)<br/>
+    <strong>-[:WITHIN*0..]-&gt;</strong> — Follow 0 or more WITHIN edges<br/>
+    <strong>(:Location &#123;...&#125;)</strong> — Must end at Location with name="United States"
+    <br/><br/>
+    <strong>Execution:</strong><br/>
+    1. Find person vertex<br/>
+    2. Follow BORN_IN edge to birthplace<br/>
+    3. Follow chain of WITHIN edges up hierarchy<br/>
+    4. Check if chain reaches "United States"<br/>
+    5. Repeat for LIVES_IN edge checking if it reaches "Europe"<br/>
+    6. Return person.name if both conditions met
+  </div>
+</DiagramContainer>
 
 **Variable-length paths:**
 
@@ -1082,36 +1141,33 @@ us_to_europe(Person) :- migrated(Person, "United States", "Europe"). /* Rule 4 *
 
 **How rules work:**
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    DATALOG RULE EVALUATION                                │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   Rule structure:                                                         │
-│   head(Output) :- body(Conditions).                                      │
-│   "head is true if body conditions are true"                             │
-│                                                                           │
-│   Rule 1: within_recursive(LocID, PlaceName) :- location(LocID, ...)    │
-│   ────────────────────────────────────────────────────────────           │
-│   If there's a location with ID and Name,                                │
-│   then that location is within_recursive itself                          │
-│                                                                           │
-│   Rule 2: within_recursive(LocID, PlaceName) :-                          │
-│              within(LocID, ViaID),                                       │
-│              within_recursive(ViaID, PlaceName).                         │
-│   ────────────────────────────────────────────────────────────           │
-│   If LocID is within ViaID,                                              │
-│   and ViaID is within_recursive PlaceName,                               │
-│   then LocID is within_recursive PlaceName (transitivity!)               │
-│                                                                           │
-│   Example execution:                                                      │
-│   1. location(3, "Idaho", "state") → within_recursive(3, "Idaho")       │
-│   2. within(3, 2) + within_recursive(2, "US") → within_recursive(3, "US")│
-│   3. within(2, 1) + within_recursive(1, "NA") → within_recursive(3, "NA")│
-│                                                                           │
-│   Idaho is now known to be within Idaho, US, and North America!          │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="DATALOG RULE EVALUATION">
+  <div style={{ fontSize: '0.9rem', lineHeight: '1.8' }}>
+    <strong>Rule structure:</strong><br/>
+    head(Output) :- body(Conditions).<br/>
+    "head is true if body conditions are true"
+    <br/><br/>
+    <strong>Rule 1:</strong> within_recursive(LocID, PlaceName) :- location(LocID, ...)<br/>
+    ─────────────────────────────────────────────────────<br/>
+    If there's a location with ID and Name,<br/>
+    then that location is within_recursive itself
+    <br/><br/>
+    <strong>Rule 2:</strong> within_recursive(LocID, PlaceName) :-<br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;within(LocID, ViaID),<br/>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;within_recursive(ViaID, PlaceName).<br/>
+    ─────────────────────────────────────────────────────<br/>
+    If LocID is within ViaID,<br/>
+    and ViaID is within_recursive PlaceName,<br/>
+    then LocID is within_recursive PlaceName (transitivity!)
+    <br/><br/>
+    <strong>Example execution:</strong><br/>
+    1. location(3, "Idaho", "state") → within_recursive(3, "Idaho")<br/>
+    2. within(3, 2) + within_recursive(2, "US") → within_recursive(3, "US")<br/>
+    3. within(2, 1) + within_recursive(1, "NA") → within_recursive(3, "NA")
+    <br/><br/>
+    Idaho is now known to be within Idaho, US, and North America!
+  </div>
+</DiagramContainer>
 
 > **💡 Insight**
 >
@@ -1222,41 +1278,57 @@ In the response, Aaliyah's name appears twice—once as the sender of message 1,
 
 **Example: Conference management system**
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    EVENT SOURCING ARCHITECTURE                            │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   EVENT LOG (Source of Truth)                                            │
-│   ┌────────────────────────────────────────────────────────────────┐     │
-│   │ 1. RegistrationOpened(capacity: 500)                           │     │
-│   │ 2. SeatReserved(attendee: "Alice", count: 1)                   │     │
-│   │ 3. SeatReserved(attendee: "Bob", count: 2)                     │     │
-│   │ 4. PaymentReceived(attendee: "Alice", amount: 100)             │     │
-│   │ 5. ReservationCancelled(attendee: "Bob")                       │     │
-│   │ 6. SeatReserved(attendee: "Charlie", count: 1)                 │     │
-│   │ ...                                                             │     │
-│   └──────────────────────┬─────────────────────────────────────────┘     │
-│                          │                                                │
-│                          │ Events flow to                                 │
-│                          │ multiple views                                 │
-│                          │                                                │
-│           ┌──────────────┼──────────────┐                                 │
-│           │              │              │                                 │
-│           ▼              ▼              ▼                                 │
-│   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                        │
-│   │ Booking     │ │ Dashboard   │ │ Badge       │                        │
-│   │ Status View │ │ Charts View │ │ Printer View│                        │
-│   │ ─────────── │ │ ─────────── │ │ ─────────── │                        │
-│   │ Alice: Paid │ │ Revenue: $$ │ │ Alice ✓     │                        │
-│   │ Bob: Cancel │ │ Seats: 498  │ │ Charlie ✓   │                        │
-│   │ Charlie: OK │ │ Trend: ↗    │ │             │                        │
-│   └─────────────┘ └─────────────┘ └─────────────┘                        │
-│                                                                           │
-│   Materialized views = Read models = Projections                         │
-│   Can be deleted and rebuilt from event log                              │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="EVENT SOURCING ARCHITECTURE">
+  <Column gap="lg">
+    <Group title="EVENT LOG (Source of Truth)" color={colors.blue}>
+      <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+        1. RegistrationOpened(capacity: 500)<br/>
+        2. SeatReserved(attendee: "Alice", count: 1)<br/>
+        3. SeatReserved(attendee: "Bob", count: 2)<br/>
+        4. PaymentReceived(attendee: "Alice", amount: 100)<br/>
+        5. ReservationCancelled(attendee: "Bob")<br/>
+        6. SeatReserved(attendee: "Charlie", count: 1)<br/>
+        ...
+      </div>
+    </Group>
+
+    <div style={{ textAlign: 'center', color: colors.slate }}>
+      ↓<br/>
+      Events flow to multiple views<br/>
+      ↓
+    </div>
+
+    <Row gap="lg" wrap={true}>
+      <Group title="Booking Status View" color={colors.green}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          Alice: Paid<br/>
+          Bob: Cancel<br/>
+          Charlie: OK
+        </div>
+      </Group>
+
+      <Group title="Dashboard Charts View" color={colors.purple}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          Revenue: $$<br/>
+          Seats: 498<br/>
+          Trend: ↗
+        </div>
+      </Group>
+
+      <Group title="Badge Printer View" color={colors.orange}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          Alice ✓<br/>
+          Charlie ✓
+        </div>
+      </Group>
+    </Row>
+
+    <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+      Materialized views = Read models = Projections<br/>
+      Can be deleted and rebuilt from event log
+    </div>
+  </Column>
+</DiagramContainer>
 
 **Key concepts:**
 
@@ -1332,37 +1404,56 @@ result = (df
 
 **Relational to matrix transformation:**
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    RELATIONAL TO MATRIX TRANSFORMATION                    │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│   RELATIONAL TABLE                                                        │
-│   ┌─────────┬──────────┬────────┐                                        │
-│   │ user_id │ movie_id │ rating │                                        │
-│   ├─────────┼──────────┼────────┤                                        │
-│   │   1     │   101    │   5    │                                        │
-│   │   1     │   102    │   3    │                                        │
-│   │   2     │   101    │   4    │                                        │
-│   │   2     │   103    │   5    │                                        │
-│   │   3     │   102    │   2    │                                        │
-│   └─────────┴──────────┴────────┘                                        │
-│                                                                           │
-│                         ▼ Transform (pivot)                               │
-│                                                                           │
-│   MATRIX (Sparse)                                                         │
-│              Movie 101   Movie 102   Movie 103                            │
-│            ┌──────────┬──────────┬──────────┐                            │
-│   User 1   │    5     │    3     │    -     │                            │
-│   User 2   │    4     │    -     │    5     │                            │
-│   User 3   │    -     │    2     │    -     │                            │
-│            └──────────┴──────────┴──────────┘                            │
-│                                                                           │
-│   Sparse matrix: Many empty cells (user hasn't rated movie)              │
-│   Libraries like NumPy, SciPy handle sparse arrays efficiently           │
-│   ML algorithms (matrix factorization) operate on this form              │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="RELATIONAL TO MATRIX TRANSFORMATION">
+  <Column gap="lg">
+    <Group title="RELATIONAL TABLE" color={colors.blue}>
+      <table style={{ fontSize: '0.85rem', borderCollapse: 'collapse', width: '100%' }}>
+        <thead>
+          <tr style={{ borderBottom: '2px solid #ddd' }}>
+            <th style={{ padding: '0.5rem', textAlign: 'left' }}>user_id</th>
+            <th style={{ padding: '0.5rem', textAlign: 'left' }}>movie_id</th>
+            <th style={{ padding: '0.5rem', textAlign: 'left' }}>rating</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style={{ padding: '0.5rem' }}>1</td><td style={{ padding: '0.5rem' }}>101</td><td style={{ padding: '0.5rem' }}>5</td></tr>
+          <tr><td style={{ padding: '0.5rem' }}>1</td><td style={{ padding: '0.5rem' }}>102</td><td style={{ padding: '0.5rem' }}>3</td></tr>
+          <tr><td style={{ padding: '0.5rem' }}>2</td><td style={{ padding: '0.5rem' }}>101</td><td style={{ padding: '0.5rem' }}>4</td></tr>
+          <tr><td style={{ padding: '0.5rem' }}>2</td><td style={{ padding: '0.5rem' }}>103</td><td style={{ padding: '0.5rem' }}>5</td></tr>
+          <tr><td style={{ padding: '0.5rem' }}>3</td><td style={{ padding: '0.5rem' }}>102</td><td style={{ padding: '0.5rem' }}>2</td></tr>
+        </tbody>
+      </table>
+    </Group>
+
+    <div style={{ textAlign: 'center', fontSize: '1.2rem', color: colors.slate }}>
+      ▼ Transform (pivot)
+    </div>
+
+    <Group title="MATRIX (Sparse)" color={colors.green}>
+      <table style={{ fontSize: '0.85rem', borderCollapse: 'collapse', width: '100%' }}>
+        <thead>
+          <tr style={{ borderBottom: '2px solid #ddd' }}>
+            <th style={{ padding: '0.5rem' }}></th>
+            <th style={{ padding: '0.5rem' }}>Movie 101</th>
+            <th style={{ padding: '0.5rem' }}>Movie 102</th>
+            <th style={{ padding: '0.5rem' }}>Movie 103</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style={{ padding: '0.5rem' }}><strong>User 1</strong></td><td style={{ padding: '0.5rem' }}>5</td><td style={{ padding: '0.5rem' }}>3</td><td style={{ padding: '0.5rem' }}>-</td></tr>
+          <tr><td style={{ padding: '0.5rem' }}><strong>User 2</strong></td><td style={{ padding: '0.5rem' }}>4</td><td style={{ padding: '0.5rem' }}>-</td><td style={{ padding: '0.5rem' }}>5</td></tr>
+          <tr><td style={{ padding: '0.5rem' }}><strong>User 3</strong></td><td style={{ padding: '0.5rem' }}>-</td><td style={{ padding: '0.5rem' }}>2</td><td style={{ padding: '0.5rem' }}>-</td></tr>
+        </tbody>
+      </table>
+    </Group>
+
+    <div style={{ marginTop: '1rem', fontSize: '0.9rem', color: colors.slate }}>
+      Sparse matrix: Many empty cells (user hasn't rated movie)<br/>
+      Libraries like NumPy, SciPy handle sparse arrays efficiently<br/>
+      ML algorithms (matrix factorization) operate on this form
+    </div>
+  </Column>
+</DiagramContainer>
 
 **Transforming non-numerical data:**
 
@@ -1404,45 +1495,57 @@ Genre: Horror → [0, 0, 1]
 
 **Star schema example:**
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    STAR SCHEMA FOR RETAIL ANALYTICS                       │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                           │
-│                         dim_date                                          │
-│                    ┌─────────────────┐                                    │
-│                    │ date_key        │                                    │
-│                    │ date            │                                    │
-│                    │ day_of_week     │                                    │
-│                    │ is_holiday      │                                    │
-│                    └────────┬────────┘                                    │
-│                             │                                             │
-│       dim_product           │           dim_store                         │
-│    ┌──────────────┐         │        ┌──────────────┐                    │
-│    │ product_key  │         │        │ store_key    │                    │
-│    │ SKU          │         │        │ store_name   │                    │
-│    │ description  │         │        │ city         │                    │
-│    │ brand        │         │        │ square_feet  │                    │
-│    │ category     │         │        │ has_bakery   │                    │
-│    └──────┬───────┘         │        └──────┬───────┘                    │
-│           │                 │               │                            │
-│           │                 ▼               │                            │
-│           │          ┌─────────────────┐    │                            │
-│           └─────────▶│  fact_sales     │◀───┘                            │
-│                      │  ─────────────  │                                 │
-│                      │  date_key (FK)  │                                 │
-│                      │  product_key(FK)│                                 │
-│                      │  store_key (FK) │                                 │
-│                      │  quantity       │                                 │
-│                      │  revenue        │                                 │
-│                      │  cost           │                                 │
-│                      └─────────────────┘                                 │
-│                                                                           │
-│   Fact table = center (millions/billions of rows)                        │
-│   Dimension tables = rays (relatively small)                             │
-│   Queries join fact table to multiple dimensions                         │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="STAR SCHEMA FOR RETAIL ANALYTICS">
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', alignItems: 'center' }}>
+    <Group title="dim_date" color={colors.blue}>
+      <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+        date_key<br/>
+        date<br/>
+        day_of_week<br/>
+        is_holiday
+      </div>
+    </Group>
+
+    <Row gap="lg" wrap={true}>
+      <Group title="dim_product" color={colors.green}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          product_key<br/>
+          SKU<br/>
+          description<br/>
+          brand<br/>
+          category
+        </div>
+      </Group>
+
+      <Group title="fact_sales (CENTER)" color={colors.purple}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          date_key (FK)<br/>
+          product_key (FK)<br/>
+          store_key (FK)<br/>
+          quantity<br/>
+          revenue<br/>
+          cost
+        </div>
+      </Group>
+
+      <Group title="dim_store" color={colors.orange}>
+        <div style={{ fontSize: '0.85rem', lineHeight: '1.6' }}>
+          store_key<br/>
+          store_name<br/>
+          city<br/>
+          square_feet<br/>
+          has_bakery
+        </div>
+      </Group>
+    </Row>
+
+    <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.9rem', color: colors.slate }}>
+      Fact table = center (millions/billions of rows)<br/>
+      Dimension tables = rays (relatively small)<br/>
+      Queries join fact table to multiple dimensions
+    </div>
+  </div>
+</DiagramContainer>
 
 **Components:**
 
@@ -1510,47 +1613,63 @@ In this chapter, we explored the landscape of data models and query languages:
 
 **Major data models:**
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    DATA MODEL SELECTION GUIDE                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│   RELATIONAL MODEL                                                       │
-│   ─────────────────                                                      │
-│   ✓ Business data, analytics, transactions                              │
-│   ✓ Complex queries, joins, ACID guarantees                             │
-│   ✓ Star/snowflake schemas for warehouses                               │
-│   ✗ Rigid schemas, object-relational mismatch                           │
-│                                                                          │
-│   DOCUMENT MODEL                                                         │
-│   ──────────────                                                         │
-│   ✓ Self-contained JSON documents, tree structures                      │
-│   ✓ Schema flexibility, one-to-many relationships                       │
-│   ✓ Data locality for reads                                             │
-│   ✗ Weak join support, many-to-many awkward                             │
-│                                                                          │
-│   GRAPH MODEL                                                            │
-│   ────────────                                                           │
-│   ✓ Highly connected data, many-to-many everywhere                      │
-│   ✓ Recursive queries, path traversals                                  │
-│   ✓ Heterogeneous types, evolving schemas                               │
-│   ✗ Overkill for simple relationships                                   │
-│                                                                          │
-│   EVENT SOURCING                                                         │
-│   ──────────────                                                         │
-│   ✓ Audit trails, temporal queries, debugging                           │
-│   ✓ Multiple read models from one source                                │
-│   ✓ Reversibility, evolution                                            │
-│   ✗ Complexity, external data handling, GDPR challenges                 │
-│                                                                          │
-│   DATAFRAMES                                                             │
-│   ──────────                                                             │
-│   ✓ Data science, ML, statistical analysis                              │
-│   ✓ Transform relational → matrix                                       │
-│   ✓ Scientific computing, time series                                   │
-│   ✗ Not for OLTP, schema-less wrangling                                 │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+<DiagramContainer title="DATA MODEL SELECTION GUIDE">
+  <CardGrid
+    cards={[
+      {
+        title: "RELATIONAL MODEL",
+        color: colors.blue,
+        items: [
+          "✓ Business data, analytics, transactions",
+          "✓ Complex queries, joins, ACID guarantees",
+          "✓ Star/snowflake schemas for warehouses",
+          "✗ Rigid schemas, object-relational mismatch"
+        ]
+      },
+      {
+        title: "DOCUMENT MODEL",
+        color: colors.purple,
+        items: [
+          "✓ Self-contained JSON documents, tree structures",
+          "✓ Schema flexibility, one-to-many relationships",
+          "✓ Data locality for reads",
+          "✗ Weak join support, many-to-many awkward"
+        ]
+      },
+      {
+        title: "GRAPH MODEL",
+        color: colors.green,
+        items: [
+          "✓ Highly connected data, many-to-many everywhere",
+          "✓ Recursive queries, path traversals",
+          "✓ Heterogeneous types, evolving schemas",
+          "✗ Overkill for simple relationships"
+        ]
+      },
+      {
+        title: "EVENT SOURCING",
+        color: colors.orange,
+        items: [
+          "✓ Audit trails, temporal queries, debugging",
+          "✓ Multiple read models from one source",
+          "✓ Reversibility, evolution",
+          "✗ Complexity, external data handling, GDPR challenges"
+        ]
+      },
+      {
+        title: "DATAFRAMES",
+        color: colors.cyan,
+        items: [
+          "✓ Data science, ML, statistical analysis",
+          "✓ Transform relational → matrix",
+          "✓ Scientific computing, time series",
+          "✗ Not for OLTP, schema-less wrangling"
+        ]
+      }
+    ]}
+    columns={3}
+  />
+</DiagramContainer>
 
 **Query languages:**
 
@@ -1592,4 +1711,4 @@ In the next chapter, we'll discuss the trade-offs in implementing these data mod
 
 ---
 
-**Previous:** [Chapter 2](chapter02-nonfunctional-requirements.md) | **Next:** [Chapter 4](chapter04-storage-retrieval.md)
+**Previous:** [Chapter 2](chapter02-nonfunctional-requirements) | **Next:** [Chapter 4](chapter04-storage-retrieval)

@@ -1,6 +1,6 @@
 ---
 sidebar_position: 2
-title: "Sharding"
+title: "Chapter 7. Sharding"
 description: "Understanding data sharding and partitioning strategies for distributed databases"
 ---
 

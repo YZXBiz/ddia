@@ -1,0 +1,1602 @@
+---
+sidebar_position: 5
+title: "Chapter 5. Encoding and Evolution"
+description: "Data encoding formats and schema evolution for maintaining compatibility across versions"
+---
+
+import { Box, Arrow, Row, Column, Group, DiagramContainer, ProcessFlow, TreeDiagram, CardGrid, ConnectionDiagram, StackDiagram, ComparisonTable, StateFlow, colors } from '@site/src/components/diagrams';
+
+# Chapter 5. Encoding and Evolution
+
+> Everything changes and nothing stands still.
+>
+> _Heraclitus of Ephesus, as quoted by Plato in Cratylus (360 BCE)_
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+   - 1.1. [The Challenge of Change](#11-the-challenge-of-change)
+   - 1.2. [Compatibility Requirements](#12-compatibility-requirements)
+2. [Formats for Encoding Data](#2-formats-for-encoding-data)
+   - 2.1. [Language-Specific Formats](#21-language-specific-formats)
+   - 2.2. [JSON, XML, and Binary Variants](#22-json-xml-and-binary-variants)
+   - 2.3. [Protocol Buffers](#23-protocol-buffers)
+   - 2.4. [Avro](#24-avro)
+   - 2.5. [The Merits of Schemas](#25-the-merits-of-schemas)
+3. [Modes of Dataflow](#3-modes-of-dataflow)
+   - 3.1. [Dataflow Through Databases](#31-dataflow-through-databases)
+   - 3.2. [Dataflow Through Services: REST and RPC](#32-dataflow-through-services-rest-and-rpc)
+   - 3.3. [Durable Execution and Workflows](#33-durable-execution-and-workflows)
+   - 3.4. [Event-Driven Architectures](#34-event-driven-architectures)
+4. [Summary](#4-summary)
+
+---
+
+## 1. Introduction
+
+**In plain English:** Think about updating an app on your phone. Some users update immediately, others wait weeks or months. During that time, the new version and old version need to work together, sharing data without breaking. This chapter is about how to make that happen.
+
+**In technical terms:** This chapter explores how to encode data structures into bytes for storage or transmission, and how to evolve those encodings over time while maintaining compatibility between different versions of your application.
+
+**Why it matters:** Applications inevitably change. Without careful planning for how data is encoded and versioned, you'll either break existing systems or be unable to deploy new features. The techniques in this chapter enable smooth, zero-downtime deployments.
+
+### 1.1. The Challenge of Change
+
+Applications inevitably change over time. Features are added or modified as new products are launched, user requirements become better understood, or business circumstances change. In Chapter 2 we introduced the idea of evolvability: we should aim to build systems that make it easy to adapt to change.
+
+In most cases, a change to an application's features also requires a change to data that it stores: perhaps a new field or record type needs to be captured, or perhaps existing data needs to be presented in a new way.
+
+<DiagramContainer title="DEPLOYMENT REALITY">
+  <Column gap="lg">
+    <Row gap="lg">
+      <Group title="SERVER-SIDE" color={colors.blue}>
+        <div style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Rolling Upgrade:</div>
+        <Row>
+          <Box color={colors.blue} size="sm">v1.0<br/>Server</Box>
+          <Box color={colors.green} size="sm">v1.1<br/>Server</Box>
+        </Row>
+      </Group>
+      <Group title="CLIENT-SIDE" color={colors.purple}>
+        <div style={{ textAlign: 'center', marginBottom: '0.5rem' }}>User Updates:</div>
+        <Row>
+          <Box color={colors.blue} size="sm">v1.0<br/>Mobile</Box>
+          <Box color={colors.blue} size="sm">v1.0<br/>Mobile</Box>
+        </Row>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.orange}>Database<br/>(Mixed data versions)</Box>
+    <div style={{ textAlign: 'center', fontWeight: 'bold', color: colors.red }}>
+      Challenge: Old and new versions coexist and must interoperate
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Deployment scenarios requiring version coexistence:**
+
+- **Rolling upgrades (server-side)**: Deploy new version to a few nodes at a time, checking whether the new version runs smoothly, gradually working through all nodes. This allows deployments without service downtime.
+
+- **User-controlled updates (client-side)**: You're at the mercy of users, who may not install updates for weeks or months.
+
+> **💡 Insight**
+>
+> The fundamental challenge is that old and new versions of code, and old and new data formats, may all coexist in the system simultaneously. This isn't a temporary state—it's the normal operating condition of most production systems.
+
+### 1.2. Compatibility Requirements
+
+To maintain system functionality during version transitions, we need compatibility in both directions:
+
+<DiagramContainer title="COMPATIBILITY REQUIREMENTS">
+  <Column gap="lg">
+    <Group title="BACKWARD COMPATIBILITY" color={colors.green}>
+      <div>Newer code can read data written by older code</div>
+      <Row>
+        <Box color={colors.blue} size="sm">Old Writer<br/>(v1.0)</Box>
+        <Arrow label="Data" />
+        <Box color={colors.green} size="sm">New Reader<br/>(v1.1)</Box>
+      </Row>
+      <div style={{ fontSize: '0.9rem' }}>Example: New app version reads old database records</div>
+      <div style={{ fontSize: '0.9rem' }}>Difficulty: ⭐⭐ (Usually straightforward)</div>
+    </Group>
+
+    <div style={{ borderTop: '2px solid #ddd', width: '100%', margin: '1rem 0' }}></div>
+
+    <Group title="FORWARD COMPATIBILITY" color={colors.orange}>
+      <div>Older code can read data written by newer code</div>
+      <Row>
+        <Box color={colors.green} size="sm">New Writer<br/>(v1.1)</Box>
+        <Arrow label="Data" />
+        <Box color={colors.blue} size="sm">Old Reader<br/>(v1.0)</Box>
+      </Row>
+      <div style={{ fontSize: '0.9rem' }}>Example: Old app version reads new database records</div>
+      <div style={{ fontSize: '0.9rem' }}>Difficulty: ⭐⭐⭐⭐ (Requires careful design)</div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**Backward compatibility** is normally not hard to achieve: as author of the newer code, you know the format of data written by older code, and so you can explicitly handle it.
+
+**Forward compatibility** can be trickier, because it requires older code to ignore additions made by a newer version of the code.
+
+**The data loss problem:**
+
+<DiagramContainer title="FORWARD COMPATIBILITY CHALLENGE">
+  <ProcessFlow
+    steps={[
+      {
+        title: "New code writes record with new field",
+        description: '{ "name": "Alice", "email": "alice@example.com", "phone": "+1-555-0100" }',
+        color: colors.green
+      },
+      {
+        title: "Old code reads and decodes record",
+        description: "class User { String name; String email; // No phone field! }",
+        color: colors.blue
+      },
+      {
+        title: "Old code updates and writes back",
+        description: '{ "name": "Alice Smith", "email": "alice@example.com" } // phone field is LOST! ⚠️',
+        color: colors.red
+      }
+    ]}
+    direction="vertical"
+  />
+  <div style={{ marginTop: '1rem', fontWeight: 'bold', color: colors.green }}>
+    Solution: Preserve unknown fields during decode
+  </div>
+</DiagramContainer>
+
+---
+
+## 2. Formats for Encoding Data
+
+**In plain English:** Your program works with objects, lists, and dictionaries in memory. But to save data to a file or send it over the network, you need to convert it into a sequence of bytes. This conversion process is called encoding (or serialization).
+
+**In technical terms:** Programs work with data in two representations: (1) in-memory data structures optimized for CPU access, and (2) self-contained byte sequences for storage or transmission. Encoding translates from (1) to (2); decoding reverses the process.
+
+<DiagramContainer title="ENCODING PROCESS">
+  <Row gap="lg">
+    <Group title="IN MEMORY" color={colors.blue}>
+      <Box color={colors.blue} size="md">
+        Objects<br/>
+        Structs<br/>
+        Lists/Arrays<br/>
+        Hash Tables<br/>
+        Trees
+      </Box>
+      <div style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>
+        <div>Optimized for:</div>
+        <div>• Fast CPU access</div>
+        <div>• Pointer traversal</div>
+        <div>• Mutable</div>
+      </div>
+    </Group>
+
+    <Column>
+      <Arrow label="Encode" />
+      <Arrow direction="left" label="Decode" />
+    </Column>
+
+    <Group title="ON DISK / NETWORK" color={colors.green}>
+      <Box color={colors.green} size="md">
+        Byte Sequence<br/>
+        (no pointers!)<br/>
+        <br/>
+        Self-contained<br/>
+        representation
+      </Box>
+      <div style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>
+        <div>Optimized for:</div>
+        <div>• Network transfer</div>
+        <div>• Disk storage</div>
+        <div>• Immutable</div>
+      </div>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+**Terminology note:** Serialization is unfortunately also used in the context of transactions (Chapter 8) with a completely different meaning. We'll use "encoding" to avoid confusion.
+
+### 2.1. Language-Specific Formats
+
+Many programming languages have built-in serialization:
+- Java: `java.io.Serializable`
+- Python: `pickle`
+- Ruby: `Marshal`
+- Third-party: Kryo (Java)
+
+**Problems with language-specific formats:**
+
+| Problem | Impact |
+|---------|--------|
+| **Language lock-in** | Data encoded in Java cannot be read by Python. You're committed to your current language. |
+| **Security vulnerabilities** | Decoding can instantiate arbitrary classes, enabling remote code execution attacks. |
+| **Versioning neglected** | Forward/backward compatibility often an afterthought. |
+| **Efficiency neglected** | Java serialization notorious for poor performance and bloated encoding. |
+
+> **💡 Insight**
+>
+> The appeal of language-specific formats is convenience: minimal code to save and restore objects. But this convenience comes at enormous cost. Use them only for transient, in-process caching, never for storage or inter-service communication.
+
+### 2.2. JSON, XML, and Binary Variants
+
+When moving to standardized encodings that can be written and read by many programming languages, JSON and XML are the obvious contenders. CSV is another popular language-independent format, but only supports tabular data without nesting.
+
+**Advantages:**
+- Widely known and supported
+- Human-readable text format
+- Built-in browser support (JSON)
+
+**Subtle problems:**
+
+<DiagramContainer title="TEXTUAL FORMAT LIMITATIONS">
+  <Column gap="lg">
+    <Group title="PROBLEM 1: Number Ambiguity" color={colors.red}>
+      <div>XML/CSV: Cannot distinguish number from string of digits</div>
+      <div>JSON: Cannot distinguish integers from floating-point</div>
+      <div style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>
+        Example: Twitter post IDs (64-bit integers &gt; 2^53)<br/>
+        {'{'} "id": 1234567890123456789, // Lost precision in JavaScript!<br/>
+        "id_str": "1234567890123456789" {'}'}
+      </div>
+    </Group>
+
+    <Group title="PROBLEM 2: Binary Data" color={colors.orange}>
+      <div>JSON/XML: No native binary string support</div>
+      <div>Workaround: Base64 encoding</div>
+      <div>Cost: 33% size increase + decoding overhead</div>
+    </Group>
+
+    <Group title="PROBLEM 3: Schema Complexity" color={colors.purple}>
+      <div>XML Schema and JSON Schema are powerful but complicated</div>
+      <div>Learning curve steep, implementation non-trivial</div>
+    </Group>
+
+    <Group title="PROBLEM 4: CSV Vagueness" color={colors.slate}>
+      <div>No schema → application defines meaning</div>
+      <div>Ambiguous escaping rules (commas in values? newlines?)</div>
+      <div>Not all parsers implement spec correctly</div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+Despite these flaws, JSON, XML, and CSV remain popular for data interchange between organizations. The difficulty of getting different organizations to agree on anything outweighs most other concerns.
+
+#### JSON Schema
+
+JSON Schema has become widely adopted for modeling data exchanged between systems:
+
+**Key features:**
+- Standard primitive types: strings, numbers, integers, objects, arrays, booleans, nulls
+- Validation constraints: min/max values, pattern matching, required fields
+- Open vs. closed content models
+
+**Content models:**
+
+```json
+// OPEN CONTENT MODEL (default: additionalProperties: true)
+// Allows undefined fields with any type
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "name": {"type": "string"},
+    "age": {"type": "integer"}
+  }
+  // Unknown fields allowed by default
+}
+
+// CLOSED CONTENT MODEL (additionalProperties: false)
+// Only defined fields permitted
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+  },
+  "additionalProperties": false
+}
+```
+
+**Complex example: Map with integer keys:**
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "patternProperties": {
+    "^[0-9]+$": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+This defines a map where keys must be digit strings (JSON requires string keys) and values must be strings.
+
+> **💡 Insight**
+>
+> JSON Schema's power comes from its flexibility, but this also makes schemas complex and evolution challenging. Features like conditional logic, remote schema references, and open content models create schemas that are difficult to reason about and evolve safely.
+
+#### Binary Encoding
+
+JSON is less verbose than XML, but both use considerable space compared to binary formats. This led to many binary JSON encodings: MessagePack, CBOR, BSON, BJSON, UBJSON, BISON, Hessian, Smile.
+
+**Example record for encoding comparisons:**
+
+```json
+{
+    "userName": "Martin",
+    "favoriteNumber": 1337,
+    "interests": ["daydreaming", "hacking"]
+}
+```
+
+**MessagePack encoding:**
+
+<DiagramContainer title="MESSAGEPACK ENCODING">
+  <Column gap="md">
+    <div style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
+      Byte Sequence:<br/>
+      0x83 | 0xa8 | userName... | 0xa6 | Martin | 0xd0 | 1337 | ...
+    </div>
+    <div style={{ fontSize: '0.85rem' }}>
+      <div>• 0x83 = Object with 3 fields</div>
+      <div>• 0xa8 = String, 8 bytes long ("userName")</div>
+      <div>• 0xa6 = String, 6 bytes long ("Martin")</div>
+      <div>• 0xd0 = Integer: 1337</div>
+    </div>
+    <div style={{ fontWeight: 'bold', marginTop: '1rem' }}>
+      Total: 66 bytes (vs 81 bytes JSON with whitespace removed)<br/>
+      Savings: Modest 18% reduction
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Key limitation:** Binary JSON variants still include field names in the encoded data. To do much better, we need schemas.
+
+### 2.3. Protocol Buffers
+
+Protocol Buffers (protobuf) is a binary encoding library developed at Google. It requires a schema for any data that is encoded.
+
+**Schema definition (IDL):**
+
+```protobuf
+syntax = "proto3";
+
+message Person {
+    string user_name = 1;
+    int64 favorite_number = 2;
+    repeated string interests = 3;
+}
+```
+
+**Code generation:**
+The schema is compiled into classes for various programming languages. Your application calls generated code to encode/decode records.
+
+**Binary encoding:**
+
+<DiagramContainer title="PROTOCOL BUFFERS ENCODING">
+  <Column gap="md">
+    <div style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
+      Byte Sequence:<br/>
+      0x0a | 0x06 | Martin | 0x10 | 0xb9 0x0a | 0x1a | 0x0b...
+    </div>
+    <div style={{ fontSize: '0.85rem' }}>
+      <div>• 0x0a = Tag 1 + type (string)</div>
+      <div>• 0x06 = Length: 6 bytes</div>
+      <div>• 0x10 = Tag 2 + type (int64)</div>
+      <div>• 0xb9 0x0a = 1337 (variable-length)</div>
+      <div>• 0x1a = Tag 3 (interests)</div>
+    </div>
+    <div style={{ fontWeight: 'bold', marginTop: '1rem' }}>
+      Total: 33 bytes (vs 66 bytes MessagePack, 81 bytes JSON)
+    </div>
+    <div style={{ fontWeight: 'bold', color: colors.green }}>
+      Key Difference: Field tags (1, 2, 3) replace field names
+    </div>
+  </Column>
+</DiagramContainer>
+
+**How it achieves compactness:**
+
+1. **Field tags instead of names**: Numbers 1, 2, 3 instead of strings "userName", "favoriteNumber", "interests"
+2. **Variable-length integers**: Number 1337 uses 2 bytes, not 8
+3. **Packed encoding**: Field type and tag combined into single byte
+4. **Omitted defaults**: Unset fields not included
+
+> **💡 Insight**
+>
+> Protocol Buffers achieves 60% size reduction over JSON by using field tags (numbers) instead of field names (strings). The schema acts as metadata that both sender and receiver must agree on—it's not included in the encoded data.
+
+#### Field Tags and Schema Evolution
+
+**The fundamental rule:** You can change field names, but you cannot change field tags.
+
+<DiagramContainer title="SCHEMA EVOLUTION RULES">
+  <Column gap="lg">
+    <Group title="ADDING NEW FIELDS" color={colors.green}>
+      <div>✅ ALLOWED: Assign new tag number</div>
+      <Row>
+        <Column align="center">
+          <Box color={colors.blue} size="sm">Old Writer<br/>(no field 4)</Box>
+          <Arrow direction="down" />
+          <Box color={colors.green} size="sm">New Reader<br/>(expects field 4)</Box>
+          <div style={{ fontSize: '0.85rem' }}>Uses default value</div>
+        </Column>
+        <Column align="center">
+          <Box color={colors.green} size="sm">New Writer<br/>(includes field 4)</Box>
+          <Arrow direction="down" />
+          <Box color={colors.blue} size="sm">Old Reader<br/>(doesn't know field 4)</Box>
+          <div style={{ fontSize: '0.85rem' }}>Skips unknown tag, preserves bytes</div>
+        </Column>
+      </Row>
+    </Group>
+
+    <Group title="REMOVING FIELDS" color={colors.orange}>
+      <div>✅ ALLOWED: Tag number must never be reused</div>
+      <div>Reserve deleted tag numbers in schema</div>
+    </Group>
+
+    <Group title="CHANGING FIELD NAMES" color={colors.green}>
+      <div>✅ ALLOWED: Encoded data never includes names</div>
+    </Group>
+
+    <Group title="CHANGING FIELD TAGS" color={colors.red}>
+      <div>❌ FORBIDDEN: Makes all existing data invalid</div>
+    </Group>
+
+    <Group title="CHANGING FIELD TYPES" color={colors.orange}>
+      <div>⚠️ RISKY: Some conversions possible, may truncate data</div>
+      <div>Example: int32 → int64 works forward, may truncate backward</div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**How unknown fields are preserved:**
+
+1. Parser encounters tag number it doesn't recognize
+2. Type annotation indicates how many bytes to skip
+3. Bytes are preserved in memory (not discarded)
+4. When record is re-encoded, unknown fields are included
+
+This prevents the data loss problem shown earlier!
+
+### 2.4. Avro
+
+Apache Avro is another binary encoding format, started in 2009 as a Hadoop subproject. It takes a different approach from Protocol Buffers.
+
+**Schema definition (Avro IDL):**
+
+```
+record Person {
+    string               userName;
+    union { null, long } favoriteNumber = null;
+    array<string>        interests;
+}
+```
+
+**Equivalent JSON schema representation:**
+
+```json
+{
+    "type": "record",
+    "name": "Person",
+    "fields": [
+        {"name": "userName",       "type": "string"},
+        {"name": "favoriteNumber", "type": ["null", "long"], "default": null},
+        {"name": "interests",      "type": {"type": "array", "items": "string"}}
+    ]
+}
+```
+
+**Binary encoding:**
+
+<DiagramContainer title="AVRO ENCODING">
+  <Column gap="md">
+    <div style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
+      Byte Sequence:<br/>
+      0x06 | Martin | 0x02 | 0xb9 0x14 | 0x02 | 0x0c daydrea...
+    </div>
+    <div style={{ fontSize: '0.85rem' }}>
+      <div>• 0x06 = Length: 6 bytes</div>
+      <div>• "Martin" = UTF-8 bytes</div>
+      <div>• 0x02 = Union index: 1 (long, not null)</div>
+      <div>• 0xb9 0x14 = 1337 (variable-length)</div>
+      <div>• 0x02 = Array length: 2</div>
+    </div>
+    <div style={{ fontWeight: 'bold', marginTop: '1rem' }}>
+      Total: 32 bytes (vs 33 bytes Protocol Buffers)
+    </div>
+    <div style={{ fontWeight: 'bold', color: colors.green }}>
+      Key Difference: NO field tags or names in encoding!
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Critical difference:** Nothing identifies fields or types. The encoding is just values concatenated together.
+
+**How can this work?** The parser uses the schema to decode:
+
+1. Read first value using schema's first field type (string)
+2. Read second value using schema's second field type (union)
+3. Read third value using schema's third field type (array)
+
+The binary data can only be decoded correctly if the reader is using the **exact same schema** as the writer.
+
+> **💡 Insight**
+>
+> Avro's approach seems crazy at first: how can you decode data without knowing what the fields are? The answer: you need the exact schema used by the writer. This requirement leads to interesting solutions for schema distribution and evolution.
+
+#### The Writer's Schema and the Reader's Schema
+
+Avro uses **two schemas** for decoding:
+
+<DiagramContainer title="AVRO SCHEMA RESOLUTION">
+  <Column gap="lg">
+    <Group title="ENCODING (Writing)" color={colors.blue}>
+      <Row>
+        <Box color={colors.blue}>Application<br/>encodes data</Box>
+        <Arrow label="uses" />
+        <Box color={colors.green}>Writer's<br/>Schema</Box>
+      </Row>
+      <Arrow direction="down" />
+      <Box color={colors.slate}>Binary data (no field names)</Box>
+    </Group>
+
+    <Group title="DECODING (Reading)" color={colors.purple}>
+      <Box color={colors.slate}>Binary data (no field names)</Box>
+      <Arrow direction="down" />
+      <Row>
+        <Box color={colors.purple}>Application<br/>decodes data</Box>
+        <Arrow label="uses" />
+        <Box color={colors.green}>Writer's Schema<br/>+<br/>Reader's Schema</Box>
+      </Row>
+    </Group>
+
+    <div style={{ fontSize: '0.9rem', marginTop: '1rem' }}>
+      <div style={{ fontWeight: 'bold' }}>Schema Resolution:</div>
+      <div>• Match fields by name (order irrelevant)</div>
+      <div>• Field in writer but not reader → ignored</div>
+      <div>• Field in reader but not writer → filled with default</div>
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Schema resolution process:**
+
+1. Avro library compares writer's schema with reader's schema
+2. Translates data from writer's schema into reader's schema
+3. Handles differences according to evolution rules
+
+**Example:**
+
+```
+Writer's Schema (v1):           Reader's Schema (v2):
+{                               {
+  "userName": string,             "userName": string,
+  "favoriteNumber": long          "favoriteNumber": long,
+}                                 "email": string  ← New field
+                                }
+```
+
+When reader decodes v1 data with v2 schema:
+- `userName` and `favoriteNumber` decoded normally
+- `email` filled with default value (empty string or null)
+
+#### Schema Evolution Rules
+
+<DiagramContainer title="AVRO EVOLUTION RULES">
+  <Column gap="md">
+    <Group title="FORWARD COMPATIBILITY (New writer → Old reader)" color={colors.green}>
+      <div>✅ Adding field: MUST have default value</div>
+      <div>✅ Removing field: No restrictions</div>
+    </Group>
+
+    <Group title="BACKWARD COMPATIBILITY (Old writer → New reader)" color={colors.blue}>
+      <div>✅ Adding field: No restrictions</div>
+      <div>✅ Removing field: MUST have had default value</div>
+    </Group>
+
+    <Group title="FIELD ORDERING" color={colors.green}>
+      <div>✅ Can reorder fields freely (matched by name, not position)</div>
+    </Group>
+
+    <Group title="FIELD NAMES" color={colors.orange}>
+      <div>⚠️ Renaming: Backward compatible via aliases, not forward compatible</div>
+    </Group>
+
+    <Group title="FIELD TYPES" color={colors.orange}>
+      <div>⚠️ Changing types: Avro can convert some types</div>
+    </Group>
+
+    <Group title="NULL VALUES" color={colors.purple}>
+      <div>⚠️ Use union types: `union {'{ null, long }'} field = null;`</div>
+      <div>Null is not default for all types (prevents bugs)</div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**Union type example:**
+
+```
+// Allows null, long, or string values
+union { null, long, string } field;
+
+// To use null as default, it must be first branch
+union { null, long } field = null;  // ✅ Valid
+union { long, null } field = null;  // ❌ Invalid
+```
+
+#### But What Is the Writer's Schema?
+
+The critical question: how does the reader obtain the writer's schema?
+
+<DiagramContainer title="SCHEMA DISTRIBUTION STRATEGIES">
+  <Column gap="lg">
+    <Group title="STRATEGY 1: Large File with Many Records" color={colors.blue}>
+      <Box color={colors.blue}>
+        Avro Object Container File<br/>
+        ──────────────────────<br/>
+        Header: Writer's Schema (once)<br/>
+        ──────────────────────<br/>
+        Record 1 (binary)<br/>
+        Record 2 (binary)<br/>
+        Record 3 (binary)<br/>
+        ... millions more ...
+      </Box>
+      <div>Use case: Hadoop data files, batch processing</div>
+    </Group>
+
+    <Group title="STRATEGY 2: Database with Individually Written Records" color={colors.purple}>
+      <Box color={colors.purple} size="md">
+        Database Record Structure:<br/>
+        [Schema Version: 42] [Record Data]
+      </Box>
+      <Box color={colors.green} size="md">
+        Schema Registry:<br/>
+        Version 42 → Schema definition<br/>
+        Version 43 → Schema definition<br/>
+        ...
+      </Box>
+      <div>Use case: Kafka (Confluent Schema Registry), Espresso</div>
+    </Group>
+
+    <Group title="STRATEGY 3: Network Connection" color={colors.orange}>
+      <Row>
+        <Box color={colors.blue}>Client</Box>
+        <Arrow label="Negotiate Schema" />
+        <Box color={colors.green}>Server</Box>
+      </Row>
+      <div>(on connection setup)</div>
+      <div>Use case: Avro RPC protocol</div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**Schema versioning approaches:**
+
+- **Incrementing integer**: Simple, e.g., v1, v2, v3, ...
+- **Hash of schema**: Content-addressed, deterministic
+
+#### Dynamically Generated Schemas
+
+Avro's lack of field tags makes it ideal for dynamically generated schemas:
+
+**Use case: Database dump to Avro**
+
+<DiagramContainer title="DYNAMIC SCHEMA GENERATION">
+  <Column gap="md" align="center">
+    <Box color={colors.blue}>
+      CREATE TABLE users (<br/>
+      &nbsp;&nbsp;id BIGINT PRIMARY KEY,<br/>
+      &nbsp;&nbsp;name VARCHAR(255),<br/>
+      &nbsp;&nbsp;email VARCHAR(255),<br/>
+      &nbsp;&nbsp;created_at TIMESTAMP<br/>
+      );
+    </Box>
+    <Arrow direction="down" label="Auto-generate" />
+    <Box color={colors.green}>
+      {'{'}<br/>
+      &nbsp;&nbsp;"type": "record",<br/>
+      &nbsp;&nbsp;"name": "users",<br/>
+      &nbsp;&nbsp;"fields": [<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;{'{"name": "id", "type": "long"}'},<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;{'{"name": "name", "type": "string"}'},<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;{'{"name": "email", "type": "string"}'},<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;{'{"name": "created_at", "type": "long"}'}<br/>
+      &nbsp;&nbsp;]<br/>
+      {'}'}
+    </Box>
+    <div style={{ fontSize: '0.9rem', marginTop: '1rem' }}>
+      Database Schema Changes:<br/>
+      ALTER TABLE users ADD COLUMN phone VARCHAR(20);<br/>
+      ↓<br/>
+      Avro Schema Regenerated Automatically (New field "phone" added)
+    </div>
+    <div style={{ fontWeight: 'bold', color: colors.green }}>
+      No manual tag assignment needed!
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Comparison with Protocol Buffers:**
+
+| Aspect | Protocol Buffers | Avro |
+|--------|------------------|------|
+| **Field tags** | Manual assignment required | Not needed |
+| **Dynamic schemas** | Administrator assigns tags | Automatic generation |
+| **Database schema changes** | Manual mapping updates | Regenerate and export |
+| **Design goal** | Static, carefully designed schemas | Dynamic, generated schemas |
+
+> **💡 Insight**
+>
+> Avro's genius is eliminating field tags. This makes it perfect for scenarios where schemas are generated programmatically from other sources, like database schemas. Protocol Buffers requires careful manual management of tag numbers, which doesn't scale when schemas change frequently.
+
+### 2.5. The Merits of Schemas
+
+Binary encodings based on schemas (Protocol Buffers, Avro) have significant advantages over JSON/XML:
+
+<DiagramContainer title="BENEFITS OF SCHEMA-BASED ENCODINGS">
+  <Column gap="md">
+    <Group title="1. COMPACTNESS" color={colors.green}>
+      <div>Omit field names from encoded data</div>
+      <div>Example: 32 bytes (Avro) vs 81 bytes (JSON)</div>
+      <div>Savings: 60% smaller</div>
+    </Group>
+
+    <Group title="2. DOCUMENTATION" color={colors.blue}>
+      <div>Schema is required for decoding</div>
+      <div>→ Guaranteed to be up-to-date (unlike manual docs)</div>
+      <div>→ Single source of truth</div>
+    </Group>
+
+    <Group title="3. COMPATIBILITY CHECKING" color={colors.purple}>
+      <div>Database of schemas enables automated checks:</div>
+      <div>• Is new schema backward compatible?</div>
+      <div>• Is new schema forward compatible?</div>
+      <div>• Prevent deployment of breaking changes</div>
+    </Group>
+
+    <Group title="4. CODE GENERATION" color={colors.orange}>
+      <div>Generate classes from schema (statically typed languages)</div>
+      <div>→ Compile-time type checking</div>
+      <div>→ IDE autocomplete</div>
+      <div>→ Catches errors before runtime</div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**Historical context:** These ideas aren't new. ASN.1 (Abstract Syntax Notation One) was standardized in 1984 and uses similar concepts:
+- Schema definition language
+- Binary encoding (DER)
+- Tag numbers for fields
+- Used in SSL certificates (X.509)
+
+However, ASN.1 is complex and poorly documented, so not recommended for new applications.
+
+**Summary:** Schema evolution provides the flexibility of schemaless JSON databases while offering better guarantees and tooling.
+
+---
+
+## 3. Modes of Dataflow
+
+**In plain English:** We've learned how to encode data into bytes. Now let's explore the different ways these bytes flow between processes: through databases, over network APIs, via workflow engines, and through message brokers.
+
+**In technical terms:** Compatibility is a relationship between the process that encodes data and the process that decodes it. Understanding dataflow patterns helps us reason about which compatibility guarantees we need.
+
+<DiagramContainer title="DATAFLOW PATTERNS">
+  <Column gap="lg">
+    <Group title="1. VIA DATABASES" color={colors.blue}>
+      <Row>
+        <Box color={colors.blue} size="sm">Process A<br/>(encoder)</Box>
+        <Arrow label="write" />
+        <Box color={colors.slate} size="sm">Database</Box>
+        <Arrow label="read" />
+        <Box color={colors.green} size="sm">Process B<br/>(decoder)</Box>
+      </Row>
+    </Group>
+
+    <Group title="2. VIA SERVICE CALLS (RPC/REST)" color={colors.purple}>
+      <Row>
+        <Box color={colors.blue} size="sm">Client<br/>(encoder)</Box>
+        <Arrow label="request" />
+        <Box color={colors.green} size="sm">Server<br/>(decoder/encoder)</Box>
+        <Arrow label="response" />
+        <Box color={colors.blue} size="sm">Client<br/>(decoder)</Box>
+      </Row>
+    </Group>
+
+    <Group title="3. VIA WORKFLOWS" color={colors.orange}>
+      <Row>
+        <Box color={colors.blue} size="sm">Task A</Box>
+        <Arrow label="output" />
+        <Box color={colors.slate} size="sm">Orchestrator</Box>
+        <Arrow label="input" />
+        <Box color={colors.green} size="sm">Task B</Box>
+      </Row>
+    </Group>
+
+    <Group title="4. VIA ASYNCHRONOUS MESSAGES" color={colors.cyan}>
+      <Row>
+        <Box color={colors.blue} size="sm">Producer<br/>(encoder)</Box>
+        <Arrow label="message" />
+        <Box color={colors.slate} size="sm">Broker</Box>
+        <Arrow label="message" />
+        <Box color={colors.green} size="sm">Consumer<br/>(decoder)</Box>
+      </Row>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+### 3.1. Dataflow Through Databases
+
+**In plain English:** Writing to a database is like sending a message to your future self. You encode it now, and later (maybe seconds, maybe years later) you'll read and decode it. The reader might be a newer version of your code, so compatibility matters.
+
+<DiagramContainer title="DATABASE DATAFLOW">
+  <Column gap="lg">
+    <Group title="SCENARIO: Rolling Upgrade" color={colors.blue}>
+      <div style={{ fontWeight: 'bold' }}>Time: 10:00 AM</div>
+      <Row>
+        <Box color={colors.blue} size="sm">App v1.0<br/>(writes)</Box>
+        <Arrow />
+        <Box color={colors.slate} size="sm">Database</Box>
+      </Row>
+
+      <div style={{ fontWeight: 'bold', marginTop: '1rem' }}>Time: 10:15 AM (during deployment)</div>
+      <Column align="center">
+        <Row>
+          <Box color={colors.blue} size="sm">App v1.0<br/>(writes)</Box>
+          <Box color={colors.green} size="sm">App v1.1<br/>(writes)</Box>
+        </Row>
+        <Arrow direction="down" />
+        <Box color={colors.slate} size="sm">Database</Box>
+        <div style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>Both versions read/write same DB</div>
+      </Column>
+
+      <div style={{ marginTop: '1rem' }}>
+        <div style={{ fontWeight: 'bold' }}>Requirements:</div>
+        <div>• v1.1 must read data written by v1.0 (backward compatibility)</div>
+        <div>• v1.0 must read data written by v1.1 (forward compatibility)</div>
+      </div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**Key insight: Data outlives code**
+
+<DiagramContainer title="DATA OUTLIVES CODE">
+  <Column gap="md">
+    <Group title="Application Deployment" color={colors.blue}>
+      <div>Code v1.0 → Code v1.1 → Code v1.2 → Code v2.0</div>
+      <div>(5 minutes) (5 minutes) (5 minutes) (5 minutes)</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>
+        Total: ~20 minutes to replace all running code
+      </div>
+    </Group>
+
+    <Group title="Database Data" color={colors.orange}>
+      <div>Data written 5 years ago ← Still there!</div>
+      <div>Data written 5 months ago ← Still there!</div>
+      <div>Data written 5 days ago ← Still there!</div>
+      <div>Data written 5 minutes ago ← Still there!</div>
+    </Group>
+
+    <div style={{ fontWeight: 'bold', color: colors.red }}>
+      Consequence: Single database contains records encoded with many<br/>
+      different schema versions spanning years
+    </div>
+  </Column>
+</DiagramContainer>
+
+#### Different Values Written at Different Times
+
+**Schema migration strategies:**
+
+| Approach | Cost | Use Case |
+|----------|------|----------|
+| **Lazy migration** | Low | Adding nullable columns |
+| **Eager migration** | High | Restructuring data |
+| **No migration** | None | Schema-on-read (e.g., JSON columns) |
+
+**Lazy migration example:**
+
+```sql
+-- Add new column
+ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT NULL;
+
+-- Old rows: phone is NULL (not stored on disk)
+-- New rows: phone may contain value
+-- Application handles both cases
+```
+
+When reading an old row, the database fills in NULL for the missing column. No rewrite needed!
+
+**Complex migrations still require rewrites:**
+- Changing single-valued to multi-valued
+- Moving data to separate table
+- Changing data types incompatibly
+
+> **💡 Insight**
+>
+> The database appears to have a single schema, but underneath it's a mix of many schema versions. Each row was written with a different version's schema. Lazy migration with default values makes this illusion work efficiently.
+
+#### Archival Storage
+
+When taking database snapshots for backups or data warehousing:
+
+<DiagramContainer title="ARCHIVAL STORAGE">
+  <Column gap="md" align="center">
+    <Box color={colors.blue}>
+      Source Database (mixed schema versions):<br/>
+      User 1: {'{'} id, name, email {'}'} ← Schema v1 (2020)<br/>
+      User 2: {'{'} id, name, email, phone {'}'} ← Schema v2 (2023)<br/>
+      User 3: {'{'} id, name, email, phone {'}'} ← Schema v2 (2024)
+    </Box>
+    <Arrow direction="down" label="Daily ETL Export" />
+    <Box color={colors.green}>
+      Avro/Parquet File (uniform schema):<br/>
+      User 1: {'{'} id, name, email, phone: null {'}'} ← Normalized<br/>
+      User 2: {'{'} id, name, email, phone {'}'} ← Latest schema<br/>
+      User 3: {'{'} id, name, email, phone {'}'}
+    </Box>
+    <div style={{ marginTop: '1rem' }}>
+      <div style={{ fontWeight: 'bold' }}>Benefits:</div>
+      <div>• Consistent encoding across all records</div>
+      <div>• Columnar format (Parquet) for analytics</div>
+      <div>• Immutable snapshot</div>
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Recommended formats for archival:**
+- **Avro Object Container Files**: Row-oriented, splittable
+- **Parquet**: Column-oriented, excellent compression, query performance
+
+### 3.2. Dataflow Through Services: REST and RPC
+
+**In plain English:** Services are like restaurants. Clients (customers) make requests over the network, servers (kitchen) process them and send back responses. The menu (API) defines what you can order and what you'll get back.
+
+<DiagramContainer title="SERVICE-ORIENTED ARCHITECTURE">
+  <Column gap="lg">
+    <Group title="CLIENT-SERVER MODEL" color={colors.blue}>
+      <Row>
+        <Box color={colors.blue}>Browser<br/>(client)</Box>
+        <Arrow label="HTTP" />
+        <Box color={colors.green}>Web Server<br/>(service)</Box>
+        <Arrow />
+        <Box color={colors.purple}>Mobile<br/>App</Box>
+      </Row>
+      <Arrow direction="down" label="API calls" />
+      <Row>
+        <Box color={colors.cyan} size="sm">User<br/>Service</Box>
+        <Box color={colors.orange} size="sm">Payment<br/>Service</Box>
+        <Box color={colors.pink} size="sm">Billing<br/>Service</Box>
+      </Row>
+    </Group>
+    <div style={{ fontWeight: 'bold' }}>
+      MICROSERVICES ARCHITECTURE<br/>
+      Each service independently deployable<br/>
+      → Need compatibility across service versions
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Key difference from databases:**
+
+| Aspect | Database | Service |
+|--------|----------|---------|
+| **Queries** | Arbitrary (SQL) | Predetermined API |
+| **Encapsulation** | Minimal | Strong (business logic) |
+| **Deployment** | Coupled to applications | Independent |
+| **Compatibility** | Both directions | Assume servers first, clients second |
+
+#### Web Services
+
+Three common scenarios for web services:
+
+1. **Public APIs**: Mobile app → Backend service (over internet)
+2. **Microservices**: Service A → Service B (same datacenter)
+3. **Inter-organization**: Your system → Partner's system (e.g., payment gateway)
+
+**REST (Representational State Transfer):**
+- Build on HTTP features: URLs, cache control, authentication, content types
+- Simple data formats (typically JSON)
+- Uses HTTP methods: GET, POST, PUT, DELETE
+
+**Interface Definition Languages (IDLs):**
+
+<DiagramContainer title="SERVICE DEFINITION EXAMPLE (OpenAPI)">
+  <Box color={colors.slate} size="lg">
+    <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', textAlign: 'left' }}>
+      openapi: 3.0.0<br/>
+      info:<br/>
+      &nbsp;&nbsp;title: Ping, Pong<br/>
+      &nbsp;&nbsp;version: 1.0.0<br/>
+      servers:<br/>
+      &nbsp;&nbsp;- url: http://localhost:8080<br/>
+      paths:<br/>
+      &nbsp;&nbsp;/ping:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;get:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;summary: Given a ping, returns a pong message<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;responses:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'200':<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;description: A pong<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;content:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;application/json:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;schema:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;type: object<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;properties:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;message:<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;type: string<br/>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;example: Pong!
+    </div>
+  </Box>
+  <div style={{ marginTop: '1rem' }}>
+    <div style={{ fontWeight: 'bold' }}>Benefits:</div>
+    <div>• Documentation (auto-generated)</div>
+    <div>• Client SDK generation</div>
+    <div>• Compatibility checking</div>
+    <div>• Testing UI (Swagger UI)</div>
+  </div>
+</DiagramContainer>
+
+**Implementation example (FastAPI):**
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI(title="Ping, Pong", version="1.0.0")
+
+class PongResponse(BaseModel):
+    message: str = "Pong!"
+
+@app.get("/ping", response_model=PongResponse,
+         summary="Given a ping, returns a pong message")
+async def ping():
+    return PongResponse()
+```
+
+The framework generates OpenAPI spec automatically from code!
+
+#### The Problems with Remote Procedure Calls (RPCs)
+
+**In plain English:** RPC tries to make a network call look like a local function call. It's like pretending talking to someone via satellite phone (with delays and static) is the same as talking to someone sitting next to you. The abstraction leaks.
+
+**Historical RPC systems (all problematic):**
+- Enterprise JavaBeans (EJB) — Java-only
+- Java RMI — Java-only
+- DCOM — Microsoft-only
+- CORBA — Extremely complex
+- SOAP — Complex, compatibility issues
+
+**Fundamental differences between local calls and network requests:**
+
+<DiagramContainer title="LOCAL CALL vs NETWORK REQUEST">
+  <Row gap="lg">
+    <Group title="LOCAL FUNCTION CALL" color={colors.green}>
+      <div style={{ fontWeight: 'bold' }}>Predictability:</div>
+      <div>• Success or exception</div>
+      <div>• Depends on your code</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>Failure modes:</div>
+      <div>• Returns result</div>
+      <div>• Throws exception</div>
+      <div>• Infinite loop/crash</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>Performance:</div>
+      <div>• Nanoseconds</div>
+      <div>• Consistent</div>
+      <div>• Predictable</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>Data passing:</div>
+      <div>• Pointers (efficient)</div>
+      <div>• References work</div>
+      <div>• Same memory space</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>Type system:</div>
+      <div>• Same language</div>
+      <div>• Type safety guaranteed</div>
+    </Group>
+
+    <Group title="NETWORK REQUEST" color={colors.red}>
+      <div style={{ fontWeight: 'bold' }}>Unpredictability:</div>
+      <div>• Success, exception, OR timeout</div>
+      <div>• Depends on network/remote machine</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>Failure modes:</div>
+      <div>• Returns result</div>
+      <div>• Throws exception</div>
+      <div>• Timeout (unknown outcome!)</div>
+      <div>• Retry → duplicate execution</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>Performance:</div>
+      <div>• Milliseconds to seconds</div>
+      <div>• Highly variable</div>
+      <div>• Dependent on network congestion</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>Data passing:</div>
+      <div>• Encode to bytes (overhead)</div>
+      <div>• Everything copied</div>
+      <div>• Network transfer</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>Type system:</div>
+      <div>• Cross-language translation needed</div>
+      <div>• Type mismatches possible</div>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> RPC's fundamental flaw is "location transparency"—pretending remote calls are local. This abstraction is leaky and dangerous. Network calls have different failure modes, performance characteristics, and semantics. REST is better because it explicitly treats network communication as distinct from function calls.
+
+#### Load Balancers, Service Discovery, and Service Meshes
+
+**In plain English:** When you have multiple servers running the same service, you need a way for clients to find them and spread requests evenly. Think of it like a host at a restaurant directing customers to different available tables.
+
+<DiagramContainer title="SERVICE DISCOVERY OPTIONS">
+  <Column gap="lg">
+    <Group title="1. HARDWARE LOAD BALANCER" color={colors.blue}>
+      <Column align="center">
+        <Box color={colors.blue} size="sm">Clients</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>Hardware LB<br/>(F5, etc.)</Box>
+        <Arrow direction="down" />
+        <Row>
+          <Box color={colors.slate} size="sm">Srv</Box>
+          <Box color={colors.slate} size="sm">Srv</Box>
+          <Box color={colors.slate} size="sm">Srv</Box>
+        </Row>
+      </Column>
+    </Group>
+
+    <Group title="2. SOFTWARE LOAD BALANCER" color={colors.purple}>
+      <Column align="center">
+        <Box color={colors.blue} size="sm">Clients</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>Nginx/HAProxy</Box>
+        <Arrow direction="down" />
+        <Row>
+          <Box color={colors.slate} size="sm">Srv</Box>
+          <Box color={colors.slate} size="sm">Srv</Box>
+          <Box color={colors.slate} size="sm">Srv</Box>
+        </Row>
+      </Column>
+    </Group>
+
+    <Group title="3. DNS-BASED" color={colors.orange}>
+      <div>Client queries "api.example.com"</div>
+      <div>DNS returns: [10.0.1.5, 10.0.1.6, 10.0.1.7]</div>
+      <div>Client picks one</div>
+      <div style={{ color: colors.red }}>Problem: DNS caching delays updates</div>
+    </Group>
+
+    <Group title="4. SERVICE DISCOVERY SYSTEM" color={colors.cyan}>
+      <Column align="center">
+        <Box color={colors.green}>Registry<br/>(Consul/etcd)</Box>
+        <div style={{ fontSize: '0.85rem' }}>
+          ← Services register themselves<br/>
+          ← Heartbeats signal health
+        </div>
+        <Arrow direction="down" />
+        <div>Client queries registry</div>
+        <div>Gets current endpoint list</div>
+        <div>Connects directly</div>
+      </Column>
+    </Group>
+
+    <Group title="5. SERVICE MESH" color={colors.pink}>
+      <Row>
+        <Column align="center">
+          <Box color={colors.blue} size="sm">Client<br/>App</Box>
+          <Arrow direction="down" />
+          <Box color={colors.purple} size="sm">Sidecar<br/>Proxy</Box>
+        </Column>
+        <Arrow />
+        <Column align="center">
+          <Box color={colors.green} size="sm">Server<br/>App</Box>
+          <Arrow direction="down" />
+          <Box color={colors.purple} size="sm">Sidecar<br/>Proxy</Box>
+        </Column>
+        <Arrow />
+        <Column align="center">
+          <Box color={colors.green} size="sm">Server<br/>App</Box>
+          <Arrow direction="down" />
+          <Box color={colors.purple} size="sm">Sidecar<br/>Proxy</Box>
+        </Column>
+      </Row>
+      <div style={{ textAlign: 'center', marginTop: '0.5rem' }}>
+        Mesh Control Plane (Istio, Linkerd, etc.)<br/>
+        Benefits: TLS, observability, traffic control
+      </div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+#### Data Encoding and Evolution for RPC
+
+**Simplifying assumption for services:** Servers are updated before clients.
+
+<DiagramContainer title="RPC COMPATIBILITY REQUIREMENTS">
+  <Column gap="md">
+    <div style={{ fontWeight: 'bold' }}>Deployment Order: Servers first, then clients</div>
+
+    <Group title="Time: 10:00 AM" color={colors.blue}>
+      <Row>
+        <Box color={colors.blue} size="sm">Client v1</Box>
+        <Arrow />
+        <Box color={colors.blue} size="sm">Server v1</Box>
+      </Row>
+    </Group>
+
+    <Group title="Time: 10:15 AM (server upgraded)" color={colors.orange}>
+      <Row>
+        <Box color={colors.blue} size="sm">Client v1</Box>
+        <Arrow label="Need BACKWARD compatibility" />
+        <Box color={colors.green} size="sm">Server v2</Box>
+      </Row>
+      <div style={{ fontSize: '0.85rem' }}>(new server, old request)</div>
+    </Group>
+
+    <Group title="Time: 10:30 AM (client upgraded)" color={colors.purple}>
+      <Row>
+        <Box color={colors.green} size="sm">Client v2</Box>
+        <Arrow />
+        <Box color={colors.green} size="sm">Server v2</Box>
+      </Row>
+      <div style={{ fontSize: '0.85rem' }}>
+        Need FORWARD compatibility<br/>
+        (old server cache, new response)
+      </div>
+    </Group>
+
+    <div style={{ marginTop: '1rem' }}>
+      <div style={{ fontWeight: 'bold' }}>Compatibility by encoding:</div>
+      <div>• gRPC (Protocol Buffers): Follow protobuf evolution rules</div>
+      <div>• Avro RPC: Follow Avro evolution rules</div>
+      <div>• RESTful JSON: Optional params + new response fields</div>
+    </div>
+  </Column>
+</DiagramContainer>
+
+**API versioning challenges:**
+
+When breaking changes are necessary, service providers maintain multiple API versions:
+
+| Versioning Approach | Example | Pros | Cons |
+|---------------------|---------|------|------|
+| **URL path** | `/v1/users`, `/v2/users` | Simple, explicit | Duplicate code |
+| **HTTP header** | `Accept: application/vnd.api+json; version=2` | Clean URLs | Less visible |
+| **API key mapping** | Server stores version per client | Flexible | Complex |
+
+**Forward compatibility is harder:** Service provider has no control over clients (especially public APIs). Compatibility must be maintained indefinitely.
+
+### 3.3. Durable Execution and Workflows
+
+**In plain English:** A workflow is like a recipe with multiple steps. Some steps might fail (oven breaks, ingredient missing), so you need a way to resume where you left off without starting over. Durable execution provides exactly-once guarantees for multi-step processes.
+
+<DiagramContainer title="WORKFLOW EXAMPLE: PAYMENT PROCESSING">
+  <Column align="center" gap="md">
+    <Box color={colors.blue}>Start</Box>
+    <Arrow direction="down" />
+    <Box color={colors.purple}>Check Fraud</Box>
+    <Row>
+      <Column align="center">
+        <Arrow direction="down" label="Fraud!" />
+        <Box color={colors.red}>Reject</Box>
+      </Column>
+      <Column align="center">
+        <Arrow direction="down" label="Legit" />
+        <Box color={colors.green}>Continue</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>Debit Credit<br/>Card</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>Deposit to<br/>Bank Account</Box>
+        <Arrow direction="down" />
+        <Box color={colors.blue}>Complete</Box>
+      </Column>
+    </Row>
+    <div style={{ marginTop: '1rem', fontWeight: 'bold', color: colors.orange }}>
+      Challenge: What if machine crashes after debit but before deposit?<br/>
+      Solution: Durable execution logs each step, replays on failure
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Workflow components:**
+
+| Component | Responsibility |
+|-----------|---------------|
+| **Orchestrator** | Schedules tasks, handles failures |
+| **Executor** | Runs individual tasks |
+| **Workflow engine** | Manages both orchestrator and executors |
+
+**Types of workflow engines:**
+
+- **ETL-focused**: Airflow, Dagster, Prefect (data pipelines)
+- **Business processes**: Camunda, Orkes (BPMN graphical notation)
+- **Durable execution**: Temporal, Restate (exactly-once semantics)
+
+#### Durable Execution
+
+**How it works:**
+
+<DiagramContainer title="DURABLE EXECUTION MECHANISM">
+  <Column gap="lg">
+    <Group title="NORMAL EXECUTION" color={colors.green}>
+      <div>Step 1: Check fraud → Log: fraud check = OK</div>
+      <div>Step 2: Debit card → Log: debit = $100 charged</div>
+      <div>Step 3: Deposit bank → Log: deposit = $100 deposited</div>
+    </Group>
+
+    <Group title="EXECUTION WITH FAILURE" color={colors.orange}>
+      <div>Step 1: Check fraud → Log: fraud check = OK</div>
+      <div>Step 2: Debit card → Log: debit = $100 charged</div>
+      <div>Step 3: Deposit bank → ⚠️ CRASH!</div>
+    </Group>
+
+    <Group title="REPLAY AFTER FAILURE" color={colors.blue}>
+      <div>Step 1: Check fraud → Skip, return logged result (OK)</div>
+      <div>Step 2: Debit card → Skip, return logged result ($100 charged)</div>
+      <div>Step 3: Deposit bank → Execute (no log entry yet)</div>
+      <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ Log: deposit = $100 deposited</div>
+    </Group>
+
+    <div style={{ fontWeight: 'bold', color: colors.green, textAlign: 'center' }}>
+      Result: Exactly-once execution, even with failures!
+    </div>
+  </Column>
+</DiagramContainer>
+
+**Temporal workflow example:**
+
+```python
+@workflow.defn
+class PaymentWorkflow:
+    @workflow.run
+    async def run(self, payment: PaymentRequest) -> PaymentResult:
+        is_fraud = await workflow.execute_activity(
+            check_fraud,
+            payment,
+            start_to_close_timeout=timedelta(seconds=15),
+        )
+        if is_fraud:
+            return PaymentResultFraudulent
+        credit_card_response = await workflow.execute_activity(
+            debit_credit_card,
+            payment,
+            start_to_close_timeout=timedelta(seconds=15),
+        )
+        # ... more activities
+```
+
+**Challenges with durable execution:**
+
+| Challenge | Mitigation |
+|-----------|-----------|
+| **Idempotency** | External services must provide unique IDs |
+| **Ordering** | Replay expects same RPC order; code changes brittle |
+| **Determinism** | Must avoid random numbers, system clocks; use framework's deterministic APIs |
+| **Code changes** | Deploy new version separately, don't modify existing workflows |
+
+> **💡 Insight**
+>
+> Durable execution achieves exactly-once semantics by logging every external interaction to a write-ahead log. On replay, the framework "pretends" to make calls but returns logged results. This is conceptually similar to database transactions, but operates across distributed services.
+
+### 3.4. Event-Driven Architectures
+
+**In plain English:** Instead of calling someone directly (RPC), you leave a message (event) on their desk (message broker). They'll process it when they're ready. You don't wait around—you continue with your work. This asynchronous pattern improves reliability and decouples systems.
+
+<DiagramContainer title="MESSAGE BROKER PATTERN">
+  <Column gap="lg">
+    <Group title="SYNCHRONOUS RPC (for comparison)" color={colors.red}>
+      <Row>
+        <Box color={colors.blue} size="sm">Client</Box>
+        <Column align="center">
+          <Arrow label="request" />
+          <Arrow direction="left" label="response" />
+        </Column>
+        <Box color={colors.green} size="sm">Server</Box>
+      </Row>
+      <div style={{ textAlign: 'center' }}>(blocks waiting)</div>
+    </Group>
+
+    <Group title="ASYNCHRONOUS MESSAGING" color={colors.green}>
+      <Row>
+        <Box color={colors.blue} size="sm">Producer</Box>
+        <Arrow label="message" />
+        <Box color={colors.slate} size="sm">Broker<br/>(stores)</Box>
+        <Arrow label="message" />
+        <Box color={colors.green} size="sm">Consumer</Box>
+      </Row>
+      <div style={{ fontSize: '0.85rem' }}>
+        (doesn't wait) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (processes when ready)
+      </div>
+    </Group>
+
+    <div style={{ marginTop: '1rem' }}>
+      <div style={{ fontWeight: 'bold' }}>ADVANTAGES:</div>
+      <div>1. Reliability: Broker buffers if consumer offline</div>
+      <div>2. Retries: Broker redelivers to crashed consumers</div>
+      <div>3. No service discovery: Producer doesn't need consumer IP</div>
+      <div>4. Fan-out: One message → multiple consumers</div>
+      <div>5. Decoupling: Producer and consumer don't know each other</div>
+    </div>
+  </Column>
+</DiagramContainer>
+
+#### Message Brokers
+
+**Popular message brokers:**
+
+| Type | Examples | Key Features |
+|------|----------|--------------|
+| **Open source** | RabbitMQ, ActiveMQ, Kafka | Self-hosted, full control |
+| **Cloud** | Amazon Kinesis, Azure Service Bus, Google Pub/Sub | Managed, scalable |
+
+**Message distribution patterns:**
+
+<DiagramContainer title="MESSAGE DISTRIBUTION PATTERNS">
+  <Column gap="lg">
+    <Group title="PATTERN 1: QUEUE (Load Balancing)" color={colors.blue}>
+      <Row>
+        <Box color={colors.blue} size="sm">Producer</Box>
+        <Arrow />
+        <Box color={colors.slate} size="sm">[Queue: orders]</Box>
+      </Row>
+      <Column align="center">
+        <Box color={colors.green} size="sm">Consumer 1</Box>
+        <Box color={colors.green} size="sm">Consumer 2</Box>
+        <Box color={colors.green} size="sm">Consumer 3</Box>
+      </Column>
+      <div style={{ fontWeight: 'bold' }}>Each message delivered to ONE consumer</div>
+      <div>Use case: Distribute work across workers</div>
+    </Group>
+
+    <Group title="PATTERN 2: TOPIC (Pub/Sub)" color={colors.purple}>
+      <Row>
+        <Box color={colors.blue} size="sm">Producer</Box>
+        <Arrow />
+        <Box color={colors.slate} size="sm">[Topic: user-updates]</Box>
+      </Row>
+      <Column align="center">
+        <Box color={colors.green} size="sm">Email Service</Box>
+        <Box color={colors.green} size="sm">Analytics Service</Box>
+        <Box color={colors.green} size="sm">Audit Log Service</Box>
+      </Column>
+      <div style={{ fontWeight: 'bold' }}>Each message delivered to ALL subscribers</div>
+      <div>Use case: Broadcast events to multiple interested services</div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**Message encoding:** Brokers are typically format-agnostic (just bytes). Common choices:
+- Protocol Buffers
+- Avro
+- JSON
+
+**Schema registries:** Used alongside brokers to store valid schemas and check compatibility (e.g., Confluent Schema Registry, Apicurio). AsyncAPI is the messaging equivalent of OpenAPI.
+
+**Durability variations:**
+
+| Broker Type | Durability | Use Case |
+|-------------|------------|----------|
+| **In-memory** | Lost on crash | Low-latency, transient events |
+| **Disk-backed** | Persisted | Reliable delivery |
+| **Indefinite storage** | Never deleted | Event sourcing, replay |
+
+> **💡 Insight**
+>
+> Message brokers introduce eventual consistency: the producer sends a message and continues immediately, but the consumer processes it later. This trades immediate consistency for better availability and fault tolerance—a key pattern in distributed systems.
+
+#### Distributed Actor Frameworks
+
+**The actor model:** Instead of threads and locks, encapsulate state in actors that communicate via asynchronous messages.
+
+**Single-process actors:**
+- Each actor has local state (not shared)
+- Processes one message at a time (no locking needed)
+- Sends/receives messages asynchronously
+
+**Distributed actors:** Same model, but actors can be on different nodes:
+
+<DiagramContainer title="DISTRIBUTED ACTOR FRAMEWORK">
+  <Row gap="lg">
+    <Group title="Node 1" color={colors.blue}>
+      <Box color={colors.blue} size="sm">Actor A<br/>(User session)</Box>
+      <Box color={colors.purple} size="sm">Actor B<br/>(Cart)</Box>
+      <Box color={colors.orange} size="sm">Actor C<br/>(Payment)</Box>
+    </Group>
+
+    <Arrow label="message" />
+
+    <Group title="Node 2" color={colors.green}>
+      <Box color={colors.blue} size="sm">Actor D<br/>(User session)</Box>
+      <Box color={colors.purple} size="sm">Actor E<br/>(Inventory)</Box>
+    </Group>
+  </Row>
+  <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+    Messages transparently encoded/decoded when crossing nodes<br/>
+    Framework handles actor location, message delivery<br/>
+    <br/>
+    Frameworks: Akka, Orleans, Erlang/OTP
+  </div>
+</DiagramContainer>
+
+**Why location transparency works better for actors:**
+
+| Aspect | RPC | Actor Model |
+|--------|-----|-------------|
+| **Failure assumptions** | Optimistic (expects success) | Pessimistic (expects failures) |
+| **Message delivery** | Synchronous (blocks) | Asynchronous (doesn't block) |
+| **Latency mismatch** | Large (nanoseconds vs milliseconds) | Small (already async) |
+
+**Compatibility:** Rolling upgrades still require forward/backward compatibility. Use Protocol Buffers, Avro, or JSON with careful evolution.
+
+---
+
+## 4. Summary
+
+In this chapter, we explored how to encode data and maintain compatibility as applications evolve:
+
+**Encoding formats:**
+
+<DiagramContainer title="ENCODING FORMAT COMPARISON">
+  <Column gap="md">
+    <Group title="Language-Specific (Java Serializable, pickle)" color={colors.red}>
+      <div>❌ Language lock-in</div>
+      <div>❌ Security vulnerabilities</div>
+      <div>❌ Poor versioning</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>
+        → Use only for transient in-process caching
+      </div>
+    </Group>
+
+    <Group title="Textual (JSON, XML, CSV)" color={colors.orange}>
+      <div>✅ Human-readable</div>
+      <div>✅ Widely supported</div>
+      <div>⚠️ Number ambiguity, no binary strings, verbose</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>
+        → Good for data interchange between organizations
+      </div>
+    </Group>
+
+    <Group title="Binary Schema-Driven (Protocol Buffers, Avro)" color={colors.green}>
+      <div>✅ Compact (60% smaller than JSON)</div>
+      <div>✅ Clear compatibility semantics</div>
+      <div>✅ Schema as documentation</div>
+      <div>✅ Code generation for type safety</div>
+      <div>❌ Not human-readable</div>
+      <div style={{ fontWeight: 'bold', marginTop: '0.5rem' }}>
+        → Best for high-volume data and APIs
+      </div>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**Compatibility types:**
+
+- **Backward compatibility**: New code reads old data (usually easy)
+- **Forward compatibility**: Old code reads new data (requires preserving unknown fields)
+
+**Dataflow modes:**
+
+| Mode | Encoder | Decoder | Compatibility Needs |
+|------|---------|---------|---------------------|
+| **Database** | Writer | Reader (possibly much later) | Both directions (rolling upgrades) |
+| **Services** | Client | Server (and vice versa) | Backward (requests), forward (responses) |
+| **Workflows** | Task output | Next task input | Depends on orchestrator |
+| **Messages** | Producer | Consumer | Both directions |
+
+**Key patterns for evolution:**
+
+1. **Add optional fields with defaults** (works in all systems)
+2. **Never reuse field tags/names** for deleted fields
+3. **Test compatibility** before deploying
+4. **Version APIs** when breaking changes unavoidable
+5. **Preserve unknown fields** during decode/encode cycles
+
+> **💡 Insight**
+>
+> The art of schema evolution is designing for change upfront. By choosing encodings that support forward and backward compatibility, and by following evolution rules consistently, you enable continuous deployment without coordination. Your future self (and teammates) will thank you.
+
+In the next chapters, we'll see how these encoding and compatibility concepts apply to larger distributed systems, where data flows through complex networks of databases, services, and message brokers.
+
+---
+
+**Previous:** [Chapter 4](chapter04-storage-retrieval) | **Next:** [Chapter 6](../part2/chapter06-replication)
