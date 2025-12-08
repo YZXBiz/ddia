@@ -1,0 +1,116 @@
+.container {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1rem 0;
+  background: var(--ifm-background-surface-color);
+}
+
+.title {
+  padding: 0.5rem 1rem;
+  background: var(--ifm-color-primary);
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  background: var(--ifm-color-emphasis-100);
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.language {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-700);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.runButton {
+  padding: 0.4rem 1rem;
+  background: var(--ifm-color-primary);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  transition: background 0.2s, transform 0.1s;
+}
+
+.runButton:hover:not(:disabled) {
+  background: var(--ifm-color-primary-dark);
+  transform: translateY(-1px);
+}
+
+.runButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.editor {
+  width: 100%;
+  min-height: 150px;
+  padding: 1rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  border: none;
+  resize: vertical;
+  background: var(--ifm-background-color);
+  color: var(--ifm-font-color-base);
+}
+
+.editor:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--ifm-color-primary-light);
+}
+
+.outputContainer {
+  border-top: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.outputLabel {
+  padding: 0.4rem 1rem;
+  background: var(--ifm-color-emphasis-100);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.output {
+  margin: 0;
+  padding: 1rem;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  background: var(--ifm-color-emphasis-100);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.error {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Dark mode adjustments */
+[data-theme='dark'] .editor {
+  background: #1a1a2e;
+}
+
+[data-theme='dark'] .output {
+  background: #1a1a2e;
+}
+
+[data-theme='dark'] .error {
+  background: rgba(239, 68, 68, 0.2);
+}
