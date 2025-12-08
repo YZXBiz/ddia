@@ -1,0 +1,3516 @@
+---
+sidebar_position: 3
+title: "Chapter 8. Transactions"
+description: "Understanding database transactions and their guarantees"
+---
+
+import { Box, Arrow, Row, Column, Group, DiagramContainer, ProcessFlow, TreeDiagram, CardGrid, ConnectionDiagram, StackDiagram, ComparisonTable, StateFlow, colors } from '@site/src/components/diagrams';
+
+# Chapter 8. Transactions
+
+> Some authors have claimed that general two-phase commit is too expensive to support, because of the performance or availability problems that it brings. We believe it is better to have application programmers deal with performance problems due to overuse of transactions as bottlenecks arise, rather than always coding around the lack of transactions.
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+   - 1.1. [What Can Go Wrong](#11-what-can-go-wrong)
+   - 1.2. [The Purpose of Transactions](#12-the-purpose-of-transactions)
+2. [What Exactly Is a Transaction?](#2-what-exactly-is-a-transaction)
+   - 2.1. [The Evolution of Transactions](#21-the-evolution-of-transactions)
+   - 2.2. [The Meaning of ACID](#22-the-meaning-of-acid)
+   - 2.3. [Single-Object and Multi-Object Operations](#23-single-object-and-multi-object-operations)
+3. [Weak Isolation Levels](#3-weak-isolation-levels)
+   - 3.1. [Read Committed](#31-read-committed)
+   - 3.2. [Snapshot Isolation and Repeatable Read](#32-snapshot-isolation-and-repeatable-read)
+   - 3.3. [Preventing Lost Updates](#33-preventing-lost-updates)
+   - 3.4. [Write Skew and Phantoms](#34-write-skew-and-phantoms)
+4. [Serializability](#4-serializability)
+   - 4.1. [Actual Serial Execution](#41-actual-serial-execution)
+   - 4.2. [Two-Phase Locking (2PL)](#42-two-phase-locking-2pl)
+   - 4.3. [Serializable Snapshot Isolation (SSI)](#43-serializable-snapshot-isolation-ssi)
+5. [Distributed Transactions](#5-distributed-transactions)
+   - 5.1. [The Atomic Commitment Problem](#51-the-atomic-commitment-problem)
+   - 5.2. [Two-Phase Commit (2PC)](#52-two-phase-commit-2pc)
+   - 5.3. [XA Transactions](#53-xa-transactions)
+   - 5.4. [Database-Internal Distributed Transactions](#54-database-internal-distributed-transactions)
+6. [Summary](#6-summary)
+
+---
+
+## 1. Introduction
+
+**In plain English:** Think of a transaction like making multiple bank transfers in one atomic operation. Either all the transfers complete successfully (you get your money and the recipient gets theirs), or none of them happen (everyone's balance stays the same). You never end up in a weird state where your money disappeared but the recipient didn't receive it.
+
+**In technical terms:** A transaction is a way for an application to group several reads and writes together into a logical unit. Conceptually, all the reads and writes in a transaction are executed as one operation: either the entire transaction succeeds (commit) or it fails (abort, rollback).
+
+**Why it matters:** Without transactions, you'd need to manually handle partial failures, network interruptions, concurrent writes, and countless edge cases. Transactions simplify error handling dramatically—if something goes wrong, just abort and retry. This reduces an enormous problem space down to simple retry logic.
+
+### 1.1. What Can Go Wrong
+
+In the harsh reality of data systems, many things can go wrong:
+
+<DiagramContainer title="PROBLEMS IN DATA SYSTEMS">
+  <CardGrid cards={[
+    {
+      title: "Hardware Failures",
+      icon: "🔥",
+      color: colors.red,
+      items: [
+        "Database crashes mid-write",
+        "Disk becomes full",
+        "Power failure"
+      ]
+    },
+    {
+      title: "Software Crashes",
+      icon: "💥",
+      color: colors.orange,
+      items: [
+        "App crashes halfway through",
+        "Process terminated",
+        "Out of memory errors"
+      ]
+    },
+    {
+      title: "Network Issues",
+      icon: "📡",
+      color: colors.blue,
+      items: [
+        "Connection interrupted",
+        "Timeout while writing",
+        "Packets lost"
+      ]
+    },
+    {
+      title: "Concurrency Problems",
+      icon: "🔀",
+      color: colors.purple,
+      items: [
+        "Clients overwrite each other",
+        "Read partially updated data",
+        "Race conditions"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> The Post Office Horizon scandal—where faulty accounting software caused massive financial losses and wrongful prosecutions—was likely caused by lack of proper ACID transactions. This isn't just theoretical: weak transaction guarantees can destroy businesses and lives.
+
+### 1.2. The Purpose of Transactions
+
+For decades, transactions have been the mechanism of choice for simplifying these issues.
+
+**What transactions provide:**
+
+1. **All-or-nothing guarantee**: Either the entire transaction succeeds or it fails cleanly
+2. **Isolation from concurrency**: The database handles concurrent access so you don't have to
+3. **Simple error handling**: If something fails, just retry the whole transaction
+4. **Human fault tolerance**: Deploy buggy code? Roll back and rerun with the fix
+
+**When you might not need transactions:**
+
+- Very simple access patterns (single record reads/writes)
+- Systems where eventual consistency is acceptable
+- Use cases requiring maximum performance/availability
+
+However, figuring out whether you need transactions requires understanding exactly what safety guarantees they provide and what costs they impose. Let's dive deep.
+
+---
+
+## 2. What Exactly Is a Transaction?
+
+### 2.1. The Evolution of Transactions
+
+Almost all relational databases today follow the transaction model introduced in 1975 by IBM System R—the first SQL database. Despite 50 years of evolution, the general idea remains remarkably similar across MySQL, PostgreSQL, Oracle, and SQL Server.
+
+**The NoSQL era (late 2000s):**
+
+In the late 2000s, nonrelational (NoSQL) databases gained popularity by offering:
+- New data models (documents, graphs, key-value)
+- Built-in replication and sharding
+- Higher performance and availability
+
+**The cost:** Many abandoned transactions entirely, leading to a popular belief that transactions were fundamentally unscalable.
+
+**The NewSQL renaissance (2010s+):**
+
+<DiagramContainer title="EVOLUTION OF TRANSACTION SUPPORT">
+  <ProcessFlow steps={[
+    {
+      title: "1975-2005: Traditional ACID",
+      description: "Single-node databases, strong guarantees, limited scale",
+      color: colors.blue
+    },
+    {
+      title: "2005-2015: NoSQL Era",
+      description: "Distributed systems, weak guarantees, high scale",
+      color: colors.orange
+    },
+    {
+      title: "2015-Present: NewSQL",
+      description: "Distributed + ACID, proving transactions can scale",
+      color: colors.green
+    }
+  ]} />
+</DiagramContainer>
+
+**NewSQL databases** like CockroachDB, TiDB, Spanner, FoundationDB, and YugabyteDB proved that transactional systems can scale to massive data volumes and high throughput by combining sharding with consensus protocols.
+
+> **💡 Insight**
+>
+> The key lesson: Transactions aren't fundamentally unscalable—early NoSQL systems abandoned them prematurely. Modern distributed databases show you can have both ACID guarantees and horizontal scalability, though with careful engineering and trade-offs.
+
+### 2.2. The Meaning of ACID
+
+The safety guarantees provided by transactions are described by the acronym **ACID**: Atomicity, Consistency, Isolation, and Durability. Coined in 1983 by Theo Härder and Andreas Reuter, it established precise terminology for fault-tolerance mechanisms.
+
+**The problem:** In practice, one database's ACID implementation differs significantly from another's. When a system claims to be "ACID compliant," it's often unclear what guarantees you actually get. ACID has unfortunately become mostly a marketing term.
+
+> Systems that don't meet ACID criteria are sometimes called **BASE** (Basically Available, Soft state, Eventual consistency). This is even more vague than ACID—the only sensible definition of BASE is "not ACID."
+
+Let's break down what each letter actually means:
+
+#### 2.2.1. Atomicity
+
+**In plain English:** Think of atomicity like a light switch—it's either on or off, never halfway. If you're making multiple database changes and something fails partway through, atomicity ensures all changes are rolled back, leaving no partial state.
+
+**In technical terms:** ACID atomicity describes what happens if a client wants to make several writes, but a fault occurs after some writes have been processed. If the writes are grouped into an atomic transaction and the transaction cannot be completed due to a fault, the transaction is aborted and the database must discard or undo any writes it has made.
+
+**Why "abortability" would be a better term:**
+
+<DiagramContainer title="ATOMICITY IN ACTION">
+  <Row>
+    <Column>
+      <Group title="Without Atomicity" color={colors.red}>
+        <Box color={colors.red} variant="subtle">Transfer $100</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>✓ Deduct from Account A</Box>
+        <Arrow direction="down" />
+        <Box color={colors.red}>✗ CRASH!</Box>
+        <Arrow direction="down" />
+        <Box color={colors.red} variant="subtle">Money disappeared!</Box>
+      </Group>
+    </Column>
+    <Column>
+      <Group title="With Atomicity" color={colors.green}>
+        <Box color={colors.blue} variant="subtle">Transfer $100</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>✓ Deduct from Account A</Box>
+        <Arrow direction="down" />
+        <Box color={colors.red}>✗ CRASH!</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>↻ Automatic rollback</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green} variant="subtle">Both accounts unchanged</Box>
+      </Group>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Key point:** Without atomicity, if an error occurs partway through multiple changes, it's difficult to know which changes took effect. The application could retry, but that risks making the same change twice. Atomicity simplifies this: if a transaction was aborted, nothing changed, so it's safe to retry.
+
+> **Note:** In multi-threaded programming, "atomic" means indivisible operations that other threads can't observe partially. In ACID, atomicity is NOT about concurrency—that's covered by Isolation (the "I" in ACID). ACID atomicity is about fault handling.
+
+#### 2.2.2. Consistency
+
+**The problem:** "Consistency" is terribly overloaded. It means at least five different things:
+
+<DiagramContainer title="FIVE MEANINGS OF 'CONSISTENCY'">
+  <CardGrid cards={[
+    {
+      title: "Replica Consistency",
+      description: "Eventual consistency in async replication (Chapter 6)",
+      color: colors.blue
+    },
+    {
+      title: "Consistent Snapshot",
+      description: "Backup at one moment in time, respecting happens-before",
+      color: colors.purple
+    },
+    {
+      title: "Consistent Hashing",
+      description: "Sharding approach for rebalancing (Chapter 7)",
+      color: colors.cyan
+    },
+    {
+      title: "CAP Consistency",
+      description: "Linearizability in CAP theorem (Chapter 10)",
+      color: colors.orange
+    },
+    {
+      title: "ACID Consistency",
+      description: "Application-specific invariants always satisfied",
+      color: colors.green
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+**In plain English:** ACID consistency means your data follows the business rules you've defined. For example, in an accounting system, credits and debits must always balance. If a transaction starts with valid data and preserves validity during execution, the database stays in a "good state."
+
+**In technical terms:** ACID consistency refers to application-specific invariants that must always be true. If you declare these as constraints (foreign keys, uniqueness, check constraints), the database enforces them. For more complex invariants, it's the application's responsibility to define transactions correctly.
+
+**Why it matters:** The "C" in ACID is somewhat misplaced—consistency is actually a property of the application, not just the database. The database provides mechanisms (constraints, triggers), but ultimately the application must use transactions correctly to preserve consistency.
+
+> **💡 Insight**
+>
+> Consistency is the odd one out in ACID—Atomicity, Isolation, and Durability are properties the database guarantees, but Consistency depends on the application using the database correctly. If you write bad data that violates your invariants but haven't declared those invariants, the database can't stop you.
+
+#### 2.2.3. Isolation
+
+**In plain English:** Imagine you and a friend are both trying to increment a counter at the exact same time. Without isolation, you might both read "42", both compute "43", and both write "43"—so the counter only increases by 1 instead of 2. Isolation prevents these race conditions.
+
+**In technical terms:** Isolation means concurrently executing transactions are isolated from each other—they cannot step on each other's toes. The classic formalization is **serializability**: each transaction can pretend it's the only transaction running. The database ensures that when transactions commit, the result is the same as if they had run serially (one after another).
+
+<DiagramContainer title="RACE CONDITION WITHOUT ISOLATION">
+  <Column>
+    <Box color={colors.blue} variant="subtle">Counter = 42 (in database)</Box>
+    <Arrow direction="down" />
+    <Row>
+      <Group title="User 1" color={colors.purple}>
+        <Box color={colors.purple}>Read: 42</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple}>Compute: 42 + 1</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple}>Write: 43</Box>
+      </Group>
+      <Group title="User 2" color={colors.cyan}>
+        <Box color={colors.cyan}>Read: 42</Box>
+        <Arrow direction="down" />
+        <Box color={colors.cyan}>Compute: 42 + 1</Box>
+        <Arrow direction="down" />
+        <Box color={colors.cyan}>Write: 43</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.red} variant="subtle">Counter = 43 (should be 44!)</Box>
+  </Column>
+</DiagramContainer>
+
+**The reality:** Serializability has a performance cost. In practice, many databases use weaker isolation levels that allow concurrent transactions to interfere in limited ways:
+
+- **Oracle's "serializable"** actually implements snapshot isolation (weaker than true serializability)
+- **MySQL, PostgreSQL** offer multiple isolation levels, not all serializable
+- Some race conditions can still occur with weak isolation
+
+We'll explore these isolation levels and their trade-offs in detail in Section 3.
+
+#### 2.2.4. Durability
+
+**In plain English:** Durability is the promise that once you've successfully saved your data, it won't disappear—even if the power goes out, the server crashes, or the disk fails. Think of it like writing something in permanent ink versus a whiteboard.
+
+**In technical terms:** Once a transaction has committed successfully, any data it has written will not be forgotten, even if there is a hardware fault or the database crashes.
+
+**How it's implemented:**
+
+<DiagramContainer title="DURABILITY IMPLEMENTATIONS">
+  <CardGrid cards={[
+    {
+      title: "Single-Node Database",
+      description: "Data written to nonvolatile storage (HDD/SSD)",
+      icon: "💾",
+      color: colors.blue,
+      items: [
+        "Write-ahead log (WAL)",
+        "fsync() to force disk write",
+        "Recovery from log after crash"
+      ]
+    },
+    {
+      title: "Replicated Database",
+      description: "Data copied to multiple nodes",
+      icon: "📦",
+      color: colors.green,
+      items: [
+        "Replication to N nodes",
+        "Wait for confirmations",
+        "Survive node failures"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**The harsh reality—nothing is perfect:**
+
+> **💡 Insight**
+>
+> Perfect durability doesn't exist. There are only risk-reduction techniques: writing to disk, replicating to remote machines, backups. Each has flaws:
+> - **Disk writes:** SSDs can violate fsync guarantees, firmware bugs, bad sectors (30-80% of SSDs develop bad blocks in 4 years)
+> - **Replication:** Correlated faults can take down all replicas, async replication loses recent writes
+> - **Backups:** Gradual corruption might affect all backups
+>
+> Best practice: Use all techniques together—write to disk AND replicate AND backup. Take theoretical "guarantees" with a grain of salt.
+
+**Durability evolution:**
+
+| Era | Implementation | Trade-offs |
+|-----|----------------|------------|
+| **1970s** | Archive tape | Reliable but slow to restore |
+| **1990s-2000s** | Disk/SSD | Fast but single point of failure |
+| **2010s+** | Replication | Available but complex failure modes |
+
+### 2.3. Single-Object and Multi-Object Operations
+
+**In plain English:** Sometimes you need to update multiple related pieces of data at once. Imagine an email app that shows "3 unread messages" in a counter. When a new email arrives, you need to: (1) insert the email, and (2) increment the counter. If only one happens, the app shows inconsistent data.
+
+**In technical terms:** Multi-object transactions are needed when several pieces of data must be kept in sync. ACID's atomicity and isolation describe what happens when a transaction modifies multiple objects (rows, documents, records).
+
+<DiagramContainer title="MULTI-OBJECT TRANSACTION EXAMPLE">
+  <Row>
+    <Column>
+      <Group title="Transaction Start" color={colors.blue}>
+        <Box color={colors.blue}>emails table</Box>
+        <Box color={colors.blue} variant="subtle">100 rows</Box>
+        <Box color={colors.blue}>unread_count = 3</Box>
+      </Group>
+    </Column>
+    <Arrow direction="right" label="New email arrives" />
+    <Column>
+      <Group title="Transaction End" color={colors.green}>
+        <Box color={colors.green}>emails table</Box>
+        <Box color={colors.green} variant="subtle">101 rows</Box>
+        <Box color={colors.green}>unread_count = 4</Box>
+      </Group>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Without proper isolation:**
+
+<DiagramContainer title="DIRTY READ ANOMALY">
+  <ProcessFlow steps={[
+    {
+      title: "Transaction 1: Start",
+      description: "Begin inserting new email",
+      color: colors.blue
+    },
+    {
+      title: "Transaction 1: Insert Email",
+      description: "Email added, but counter not yet updated",
+      color: colors.orange
+    },
+    {
+      title: "Transaction 2: Read Data",
+      description: "Sees new email but old counter (dirty read!)",
+      color: colors.red
+    },
+    {
+      title: "Transaction 1: Update Counter",
+      description: "Finally increments counter",
+      color: colors.blue
+    },
+    {
+      title: "Transaction 1: Commit",
+      description: "Now consistent, but Transaction 2 saw inconsistent state",
+      color: colors.green
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**User 2 sees:** Unread counter shows 3, but mailbox shows 4 unread emails. This violates isolation.
+
+**If an error occurs:**
+
+<DiagramContainer title="ATOMICITY VIOLATION">
+  <Column>
+    <Box color={colors.blue}>Start transaction</Box>
+    <Arrow direction="down" />
+    <Box color={colors.green}>✓ Insert email</Box>
+    <Arrow direction="down" />
+    <Box color={colors.red}>✗ Network timeout updating counter</Box>
+    <Arrow direction="down" />
+    <Box color={colors.orange}>Without atomicity: email exists, counter wrong</Box>
+    <Box color={colors.green}>With atomicity: email rolled back, nothing changed</Box>
+  </Column>
+</DiagramContainer>
+
+**How transactions are typically grouped:**
+
+In relational databases, everything between `BEGIN TRANSACTION` and `COMMIT` on a TCP connection belongs to the same transaction. If the TCP connection is interrupted, the transaction must be aborted.
+
+**In nonrelational databases:** Many don't have a way of grouping operations. Even if there's a multi-put API, it may not have transaction semantics—some keys might succeed while others fail, leaving partial state.
+
+#### 2.3.1. Single-object writes
+
+**In plain English:** Even writing a single document can fail partway through. What if you're saving a 20 KB JSON file and the network dies after 10 KB? Without atomicity, you'd get corrupted half-written data.
+
+**In technical terms:** Storage engines almost universally provide atomicity and isolation at the single-object level (one key-value pair on one node):
+
+- **Atomicity:** Implemented using a write-ahead log for crash recovery
+- **Isolation:** Implemented using a lock on each object (one thread accesses at a time)
+
+**Useful single-object operations:**
+
+<DiagramContainer title="SINGLE-OBJECT OPERATIONS">
+  <CardGrid cards={[
+    {
+      title: "Atomic Increment",
+      description: "UPDATE counters SET value = value + 1",
+      color: colors.blue,
+      items: [
+        "No read-modify-write cycle",
+        "Database handles atomically",
+        "Prevents lost updates"
+      ]
+    },
+    {
+      title: "Compare-and-Set (CAS)",
+      description: "Write only if value unchanged",
+      color: colors.purple,
+      items: [
+        "Conditional write operation",
+        "Detects concurrent modifications",
+        "Similar to CPU CAS instructions"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**Important limitation:** These single-object operations are useful but are NOT transactions in the traditional sense:
+
+- Cassandra/ScyllaDB "lightweight transactions": Linearizable reads and conditional writes on single object only
+- Aerospike "strong consistency": Single-object guarantees, no cross-object guarantees
+
+#### 2.3.2. The need for multi-object transactions
+
+**When you need multi-object transactions:**
+
+<DiagramContainer title="USE CASES FOR MULTI-OBJECT TRANSACTIONS">
+  <CardGrid cards={[
+    {
+      title: "Foreign Keys",
+      icon: "🔗",
+      color: colors.blue,
+      description: "Relational data model",
+      items: [
+        "Row in table A references row in table B",
+        "Must keep references valid",
+        "Inserting related records must be atomic"
+      ]
+    },
+    {
+      title: "Denormalization",
+      icon: "📄",
+      color: colors.purple,
+      description: "Document databases without joins",
+      items: [
+        "Same data stored in multiple places",
+        "Updates must hit all copies",
+        "Prevent denormalized data from diverging"
+      ]
+    },
+    {
+      title: "Secondary Indexes",
+      icon: "📇",
+      color: colors.green,
+      description: "Almost all databases",
+      items: [
+        "Indexes are separate database objects",
+        "Must update with every value change",
+        "Without isolation: record in one index, missing from another"
+      ]
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> Applications CAN be implemented without multi-object transactions, but error handling becomes vastly more complicated without atomicity, and the lack of isolation causes concurrency problems. Many developers underestimate this complexity until production issues arise.
+
+#### 2.3.3. Handling errors and aborts
+
+**In plain English:** A key feature of transactions is they can be aborted and safely retried if an error occurs. This is like an "undo" button for database operations.
+
+**In technical terms:** ACID databases follow the philosophy: if the database is in danger of violating atomicity, isolation, or durability, abandon the transaction entirely rather than allow it to remain half-finished.
+
+**Not all systems follow this philosophy:**
+
+- **Leaderless replication** datastores work on "best effort" basis
+- Won't undo what's already done if an error occurs
+- Application's responsibility to recover
+
+**The retry problem:** Although retrying is simple and effective, it isn't perfect:
+
+<DiagramContainer title="RETRY CHALLENGES">
+  <CardGrid cards={[
+    {
+      title: "Network Acknowledgment Lost",
+      icon: "📡",
+      color: colors.red,
+      description: "Transaction succeeded but client didn't know",
+      items: [
+        "Client times out waiting for ACK",
+        "Retries, executing twice",
+        "Need deduplication mechanism"
+      ]
+    },
+    {
+      title: "Overload",
+      icon: "🔥",
+      color: colors.orange,
+      description: "Retrying makes problem worse",
+      items: [
+        "Error due to high contention",
+        "Retry adds more load",
+        "Use exponential backoff"
+      ]
+    },
+    {
+      title: "Transient vs Permanent Errors",
+      icon: "⚠️",
+      color: colors.blue,
+      description: "Only retry transient errors",
+      items: [
+        "Deadlock: worth retrying",
+        "Constraint violation: pointless to retry",
+        "Distinguish error types"
+      ]
+    },
+    {
+      title: "Side Effects",
+      icon: "📧",
+      color: colors.purple,
+      description: "Outside database actions",
+      items: [
+        "Sending email",
+        "Calling external API",
+        "Need two-phase commit for atomicity"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**ORM framework problem:** Popular ORMs like Rails ActiveRecord and Django don't retry aborted transactions—exceptions bubble up and user input is lost. This defeats the whole point of aborts!
+
+---
+
+## 3. Weak Isolation Levels
+
+**In plain English:** Perfect isolation (serializability) means transactions can't interfere with each other at all—like each transaction runs alone on the database. But this is expensive, so most databases use "weaker" isolation that allows some interference. Understanding these levels is crucial because they can cause subtle bugs.
+
+**In technical terms:** If two transactions don't touch the same data, or both are read-only, they can safely run in parallel. Concurrency issues only arise when one transaction reads data being modified by another, or when transactions modify the same data simultaneously.
+
+**Why this matters:**
+
+> **💡 Insight**
+>
+> Concurrency bugs are hard to find by testing because they only trigger with unlucky timing—they're rare and difficult to reproduce. Weak isolation levels have caused substantial financial losses, corrupted customer data, and led to regulatory investigations. Even "ACID" databases often use weak isolation by default!
+
+Concurrency control is relevant for security too: an attacker might deliberately send bursts of concurrent requests to exploit race conditions. Building reliable and secure applications requires systematically preventing these bugs.
+
+### 3.1. Read Committed
+
+**The most basic isolation level.** Read committed makes two guarantees:
+
+1. **No dirty reads**: You only see committed data when reading
+2. **No dirty writes**: You only overwrite committed data when writing
+
+Some databases support an even weaker level called **read uncommitted** (prevents dirty writes but allows dirty reads). Let's explore these guarantees:
+
+#### 3.1.1. No dirty reads
+
+**In plain English:** Imagine you're transferring money between accounts. Without dirty read prevention, someone else could see the money deducted from your account but not yet added to the recipient's account—it looks like money vanished. Dirty read prevention ensures you only see committed states.
+
+**In technical terms:** A dirty read occurs when a transaction reads data written by another transaction that hasn't yet committed. Read committed prevents this: writes only become visible to others when the transaction commits (and then all writes become visible at once).
+
+<DiagramContainer title="PREVENTING DIRTY READS">
+  <Column align="start">
+    <Box color={colors.blue} variant="subtle">Initial: x = 2</Box>
+    <Arrow direction="down" />
+    <Row gap="lg">
+      <Group title="User 1" color={colors.purple}>
+        <Box color={colors.purple}>Begin transaction</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple}>Set x = 3</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple} variant="subtle">Not yet committed</Box>
+      </Group>
+      <Group title="User 2" color={colors.cyan}>
+        <Box color={colors.cyan}>Begin transaction</Box>
+        <Arrow direction="down" />
+        <Box color={colors.cyan}>Get x</Box>
+        <Arrow direction="down" />
+        <Box color={colors.green}>Returns: 2 (old value)</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.green}>User 1 commits → Now everyone sees x = 3</Box>
+  </Column>
+</DiagramContainer>
+
+**Why prevent dirty reads:**
+
+1. **Partial updates visible**: Transaction updates several rows; another transaction sees some but not others (like the email counter example)
+2. **Reading data that gets rolled back**: If a transaction aborts, any reads of its uncommitted data would also need to be aborted (cascading aborts)
+
+#### 3.1.2. No dirty writes
+
+**In plain English:** Imagine two people trying to buy the same car on a website simultaneously. Without dirty write prevention, one person might win the sale but the other person might get the invoice—a nonsensical outcome.
+
+**In technical terms:** A dirty write occurs when one transaction overwrites an uncommitted value written by another transaction. Read committed prevents this, usually by delaying the second write until the first transaction commits or aborts.
+
+<DiagramContainer title="DIRTY WRITE EXAMPLE: CAR PURCHASE">
+  <Column>
+    <Box color={colors.blue} variant="subtle">Available: Car #1234</Box>
+    <Arrow direction="down" />
+    <Row>
+      <Group title="Aaliyah" color={colors.purple}>
+        <Box color={colors.purple}>Start buying car</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple}>Update listings</Box>
+        <Box color={colors.purple} variant="subtle">buyer = Aaliyah</Box>
+      </Group>
+      <Group title="Bryce" color={colors.cyan}>
+        <Box color={colors.cyan}>Start buying car</Box>
+        <Arrow direction="down" />
+        <Box color={colors.cyan}>Update listings</Box>
+        <Box color={colors.cyan} variant="subtle">buyer = Bryce</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Row>
+      <Box color={colors.purple}>Update invoices<br/>(invoice to Aaliyah)</Box>
+      <Box color={colors.cyan}>Update invoices<br/>(invoice to Bryce)</Box>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.red}>Without dirty write prevention: Sale to Bryce, invoice to Aaliyah!</Box>
+    <Box color={colors.green}>With dirty write prevention: One person waits, only one completes</Box>
+  </Column>
+</DiagramContainer>
+
+**Important note:** Read committed does NOT prevent all race conditions. The counter increment problem (Figure 8-1) can still occur because the second write happens after the first transaction commits—it's not a dirty write, but it's still incorrect. We'll discuss this in "Preventing Lost Updates."
+
+#### 3.1.3. Implementing read committed
+
+Read committed is very popular—it's the default in **Oracle, PostgreSQL, SQL Server**, and many others.
+
+**Preventing dirty writes:**
+
+Most databases use **row-level locks**:
+- Transaction must acquire lock before modifying a row
+- Hold lock until commit or abort
+- Only one transaction can hold lock per row
+- Other transactions must wait
+
+This locking happens automatically in read committed mode.
+
+**Preventing dirty reads—two approaches:**
+
+<DiagramContainer title="APPROACHES TO PREVENT DIRTY READS">
+  <ComparisonTable
+    beforeTitle="Approach 1: Read Locks"
+    afterTitle="Approach 2: Remember Old Values"
+    beforeColor={colors.red}
+    afterColor={colors.green}
+    items={[
+      {
+        label: "Mechanism",
+        before: "Acquire lock briefly to read",
+        after: "Store both old and new values"
+      },
+      {
+        label: "Concurrency",
+        before: "One long write blocks many reads",
+        after: "Readers never blocked"
+      },
+      {
+        label: "Performance",
+        before: "Poor for read-heavy workloads",
+        after: "Excellent for read-heavy workloads"
+      },
+      {
+        label: "Used by",
+        before: "IBM Db2, MS SQL Server (some modes)",
+        after: "PostgreSQL, Oracle, most modern DBs"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Approach 2 (most common):** For every row being written:
+- Remember both old committed value and new value
+- Transactions writing hold the write lock
+- Transactions reading get the old value
+- Switch to reading new value after commit
+
+This is related to **multi-version concurrency control (MVCC)**, which we'll explore in depth next.
+
+> **💡 Insight**
+>
+> The reason most databases prefer Approach 2 (remembering old values) is that long-running writes are common (analytics queries, backups). With read locks, one slow write would freeze the entire database for reads—unacceptable for production systems.
+
+### 3.2. Snapshot Isolation and Repeatable Read
+
+**In plain English:** Imagine checking your bank account balance across two accounts. You see Account A has $500, but by the time you check Account B, a transfer has moved $100 from B to A. Account B now shows $400, so your total appears to be $900 instead of $1,000. The money seems to have vanished!
+
+**In technical terms:** Read committed prevents dirty reads but allows **read skew** (also called nonrepeatable read): if you read the same data twice in a transaction, you might get different results. Some situations can't tolerate this temporary inconsistency.
+
+<DiagramContainer title="READ SKEW EXAMPLE">
+  <ProcessFlow steps={[
+    {
+      title: "Initial State",
+      description: "Account 1: $500, Account 2: $500",
+      color: colors.blue
+    },
+    {
+      title: "Aaliyah Reads Account 1",
+      description: "Sees $500",
+      color: colors.green
+    },
+    {
+      title: "Transfer Transaction Starts",
+      description: "Moving $100 from Account 2 to Account 1",
+      color: colors.orange
+    },
+    {
+      title: "Transfer Commits",
+      description: "Account 1: $600, Account 2: $400",
+      color: colors.orange
+    },
+    {
+      title: "Aaliyah Reads Account 2",
+      description: "Sees $400 (new value)",
+      color: colors.red
+    },
+    {
+      title: "Aaliyah's View",
+      description: "Total appears to be $900—$100 vanished!",
+      color: colors.red
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**When read skew is unacceptable:**
+
+<DiagramContainer title="SITUATIONS REQUIRING SNAPSHOT ISOLATION">
+  <CardGrid cards={[
+    {
+      title: "Backups",
+      icon: "💾",
+      color: colors.blue,
+      description: "Taking backups may take hours",
+      items: [
+        "Writes continue during backup",
+        "Some parts contain old version",
+        "Other parts contain new version",
+        "Restoring gives permanent inconsistency"
+      ]
+    },
+    {
+      title: "Analytics Queries",
+      icon: "📊",
+      color: colors.purple,
+      description: "Queries scanning large portions of database",
+      items: [
+        "Common in data warehouses",
+        "Integrity checks scanning all data",
+        "Return nonsensical results if observing different time points"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**The solution: Snapshot Isolation**
+
+**In plain English:** Imagine taking a photograph of your database. That photo captures everything at one specific moment. Even if things change in real life after you take the photo, the photo itself never changes. Snapshot isolation gives each transaction its own "photograph" of the database.
+
+**In technical terms:** Each transaction reads from a consistent snapshot of the database—the transaction sees all data that was committed at the start of the transaction. Even if data is subsequently changed by other transactions, each transaction sees only the old data from its particular point in time.
+
+**Why it matters:** Long-running read-only queries (backups, analytics) are much easier to reason about when operating on a consistent snapshot frozen at a particular moment.
+
+**Popularity:** Supported by PostgreSQL, MySQL (InnoDB), Oracle, SQL Server. Some databases (Oracle, TiDB, Aurora DSQL) even use snapshot isolation as their highest isolation level.
+
+#### 3.2.1. Multi-version concurrency control (MVCC)
+
+**In plain English:** Instead of overwriting data in place, the database keeps multiple versions side-by-side. When you read, you see the version that was current when your transaction started. When you write, you create a new version. Old versions stick around for transactions that started earlier.
+
+**In technical terms:** To implement snapshot isolation, databases keep several different committed versions of each row because various in-progress transactions may need to see the database at different points in time. This technique is called **multi-version concurrency control (MVCC)**.
+
+**Key principle:** Readers never block writers, and writers never block readers. This allows long-running read queries on a consistent snapshot while processing writes normally, with no lock contention.
+
+<DiagramContainer title="MVCC IMPLEMENTATION (PostgreSQL Example)">
+  <Column align="start">
+    <Box color={colors.blue} variant="subtle">Each transaction gets unique, increasing transaction ID (txid)</Box>
+    <Arrow direction="down" />
+    <Row gap="lg">
+      <Group title="Table Structure" color={colors.blue}>
+        <Box color={colors.blue}>account_id</Box>
+        <Box color={colors.blue}>balance</Box>
+        <Box color={colors.purple}>inserted_by (txid)</Box>
+        <Box color={colors.orange}>deleted_by (txid)</Box>
+      </Group>
+      <Group title="Example Versions" color={colors.green}>
+        <Box color={colors.green} variant="subtle">Account 2, $500, txid=12, deleted=13</Box>
+        <Box color={colors.green} variant="subtle">Account 2, $400, txid=13, deleted=NULL</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.cyan}>Update = Delete + Insert (both tagged with same txid)</Box>
+  </Column>
+</DiagramContainer>
+
+**How MVCC works:**
+
+1. **Each transaction gets a unique, always-increasing ID** when it starts
+2. **Every write is tagged** with the transaction ID of the writer
+3. **Each row has `inserted_by` field**: ID of transaction that inserted this row
+4. **Each row has `deleted_by` field**: Initially empty; set to deleting transaction's ID
+5. **Deletes don't remove rows**: Just mark for deletion; garbage collection removes later
+6. **Updates are delete + insert**: Old row marked deleted, new row inserted
+
+<DiagramContainer title="MVCC EXAMPLE: TRANSACTION 13 UPDATES ACCOUNT">
+  <Row>
+    <Column>
+      <Group title="Before" color={colors.blue}>
+        <Box color={colors.blue} variant="subtle">Row: Account 2</Box>
+        <Box color={colors.blue}>balance = $500</Box>
+        <Box color={colors.blue}>inserted_by = 12</Box>
+        <Box color={colors.blue}>deleted_by = NULL</Box>
+      </Group>
+    </Column>
+    <Arrow direction="right" label="Transaction 13: Deduct $100" />
+    <Column>
+      <Group title="After" color={colors.green}>
+        <Box color={colors.orange} variant="subtle">Old row (marked deleted)</Box>
+        <Box color={colors.orange}>balance = $500</Box>
+        <Box color={colors.orange}>inserted_by = 12</Box>
+        <Box color={colors.orange}>deleted_by = 13</Box>
+        <Box color={colors.green} variant="subtle">New row (inserted)</Box>
+        <Box color={colors.green}>balance = $400</Box>
+        <Box color={colors.green}>inserted_by = 13</Box>
+        <Box color={colors.green}>deleted_by = NULL</Box>
+      </Group>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Storage:** All versions stored in same database heap (data structure), regardless of commit status. Versions of same row form a linked list for easy iteration.
+
+#### 3.2.2. Visibility rules for observing a consistent snapshot
+
+**In plain English:** When your transaction reads data, the database uses special rules to decide which version of each row you're allowed to see. These rules ensure you see a consistent snapshot—as if you took a photo at the moment your transaction started.
+
+**In technical terms:** The database uses transaction IDs and visibility rules to present a consistent snapshot:
+
+<DiagramContainer title="VISIBILITY RULES">
+  <ProcessFlow steps={[
+    {
+      title: "Rule 1: Ignore In-Progress Transactions",
+      description: "At transaction start, list all other in-progress transactions. Ignore their writes, even if they later commit.",
+      color: colors.blue
+    },
+    {
+      title: "Rule 2: Ignore Future Transactions",
+      description: "Ignore writes from transactions with higher IDs (started after current transaction).",
+      color: colors.purple
+    },
+    {
+      title: "Rule 3: Ignore Aborted Transactions",
+      description: "Ignore all writes from aborted transactions, regardless of when they aborted.",
+      color: colors.orange
+    },
+    {
+      title: "Rule 4: Everything Else Is Visible",
+      description: "All other writes are visible to the transaction's queries.",
+      color: colors.green
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Simplified visibility check for a row:**
+
+A row is visible if BOTH conditions are true:
+1. **At transaction start time**: The transaction that inserted the row had already committed
+2. **Not deleted, or**: The transaction that deleted the row hadn't yet committed at transaction start time
+
+**Example from our MVCC diagram:**
+
+- **Transaction 12 reading Account 2** sees balance of $500
+- Why? Transaction 13's deletion hasn't committed yet (from Transaction 12's perspective)
+- The $400 balance inserted by Transaction 13 is also invisible (Transaction 13 hasn't committed)
+
+> **💡 Insight**
+>
+> Long-running transactions can continue using old snapshots for extended periods, reading "stale" data that other transactions have long since overwritten. By never updating values in place but creating new versions instead, the database provides consistent snapshots with minimal overhead.
+
+#### 3.2.3. Indexes and snapshot isolation
+
+**The challenge:** How do indexes work when there are multiple versions of each row?
+
+**Most common approach:**
+
+<DiagramContainer title="INDEX STRATEGIES FOR MVCC">
+  <Column>
+    <Box color={colors.blue}>Index entry points to ONE version (oldest or newest)</Box>
+    <Arrow direction="down" />
+    <Box color={colors.purple}>Row version contains reference to next version</Box>
+    <Arrow direction="down" />
+    <Box color={colors.green}>Query follows chain to find visible version</Box>
+    <Arrow direction="down" />
+    <Box color={colors.orange}>Garbage collection removes old versions and index entries</Box>
+  </Column>
+</DiagramContainer>
+
+**Optimizations:**
+
+- **PostgreSQL**: Avoid index updates if different versions fit on same page
+- **Some databases**: Store only diffs between versions instead of full copies
+
+**Alternative approach (CouchDB, Datomic, LMDB):**
+
+Use **immutable (copy-on-write) B-trees**:
+- Don't overwrite pages when updated
+- Create new copy of each modified page
+- Parent pages copied and updated to point to new children
+- Every write creates a new B-tree root
+- Each root is a consistent snapshot at a point in time
+- No need to filter based on transaction IDs
+- Requires background compaction and garbage collection
+
+#### 3.2.4. Snapshot isolation, repeatable read, and naming confusion
+
+**The problem:** Different databases use different terms for the same thing, and the same terms for different things!
+
+<DiagramContainer title="NAMING CONFUSION">
+  <CardGrid cards={[
+    {
+      title: "PostgreSQL",
+      color: colors.blue,
+      description: "Calls snapshot isolation 'repeatable read'",
+      items: [
+        "Meets SQL standard requirements",
+        "Claims standards compliance",
+        "Actually implements snapshot isolation"
+      ]
+    },
+    {
+      title: "Oracle",
+      color: colors.purple,
+      description: "Calls snapshot isolation 'serializable'",
+      items: [
+        "Confusing terminology",
+        "NOT true serializability",
+        "Actually snapshot isolation"
+      ]
+    },
+    {
+      title: "MySQL",
+      color: colors.orange,
+      description: "'Repeatable read' = MVCC (weaker than snapshot isolation)",
+      items: [
+        "Different from PostgreSQL",
+        "Same term, different meaning",
+        "Weaker consistency than snapshot isolation"
+      ]
+    },
+    {
+      title: "IBM Db2",
+      color: colors.cyan,
+      description: "'Repeatable read' = serializability",
+      items: [
+        "Completely different meaning",
+        "Strongest guarantee",
+        "Same term as PostgreSQL/MySQL!"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**Why the confusion?**
+
+The SQL standard doesn't have the concept of snapshot isolation (it was invented after the standard was written in 1975). The standard defines "repeatable read," which looks superficially similar. The standard's definition is flawed—ambiguous, imprecise, and not implementation-independent.
+
+**Result:** Nobody really knows what "repeatable read" means!
+
+> **💡 Insight**
+>
+> Don't rely on isolation level names alone. Always check your database's documentation for what guarantees it actually provides. The SQL standard's isolation level definitions are fundamentally broken—they don't match how modern databases actually work.
+
+### 3.3. Preventing Lost Updates
+
+**In plain English:** The lost update problem happens when two people edit the same thing at once. Both read the current value, make their changes, and write back. The second write "clobbers" the first one, losing those changes. It's like two people editing a Google Doc without real-time sync—the last one to save overwrites the other's work.
+
+**In technical terms:** The lost update problem occurs when an application reads a value, modifies it, and writes back the modified value (a read-modify-write cycle). If two transactions do this concurrently, one modification can be lost because the second write doesn't include the first modification.
+
+<DiagramContainer title="LOST UPDATE PROBLEM">
+  <Row>
+    <Group title="Transaction 1" color={colors.purple}>
+      <Box color={colors.purple}>Read counter: 42</Box>
+      <Arrow direction="down" />
+      <Box color={colors.purple}>Compute: 42 + 1 = 43</Box>
+      <Arrow direction="down" />
+      <Box color={colors.purple}>Write: 43</Box>
+    </Group>
+    <Group title="Transaction 2" color={colors.cyan}>
+      <Box color={colors.cyan}>Read counter: 42</Box>
+      <Arrow direction="down" />
+      <Box color={colors.cyan}>Compute: 42 + 1 = 43</Box>
+      <Arrow direction="down" />
+      <Box color={colors.cyan}>Write: 43</Box>
+    </Group>
+  </Row>
+  <Arrow direction="down" />
+  <Box color={colors.red}>Result: 43 (should be 44—one update lost!)</Box>
+</DiagramContainer>
+
+**Common scenarios:**
+
+1. **Incrementing a counter** or updating an account balance
+2. **Making local changes to complex values** (e.g., adding element to JSON array)
+3. **Wiki page editing**: Two users edit simultaneously, each sends full page content
+
+A variety of solutions have been developed:
+
+#### 3.3.1. Atomic write operations
+
+**In plain English:** Instead of reading the current value, modifying it in your application code, and writing it back, use a special database command that does the whole operation atomically in one step.
+
+**In technical terms:** Many databases provide atomic update operations that remove the need to implement read-modify-write cycles in application code. They're usually the best solution if your code can be expressed using them.
+
+<DiagramContainer title="ATOMIC OPERATIONS">
+  <CardGrid cards={[
+    {
+      title: "SQL Databases",
+      color: colors.blue,
+      description: "Atomic increment/update",
+      items: [
+        "UPDATE counters SET value = value + 1 WHERE key = 'foo'",
+        "Entire operation is concurrency-safe",
+        "Database handles locking internally"
+      ]
+    },
+    {
+      title: "Document Databases",
+      color: colors.purple,
+      description: "Atomic JSON modifications",
+      items: [
+        "MongoDB: atomic ops on JSON parts",
+        "Update nested fields atomically",
+        "No read-modify-write cycle needed"
+      ]
+    },
+    {
+      title: "Redis",
+      color: colors.orange,
+      description: "Atomic data structure operations",
+      items: [
+        "Priority queues",
+        "Lists, sets, sorted sets",
+        "All operations atomic"
+      ]
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+**Implementation:** Usually implemented by taking an exclusive lock on the object when read, or forcing all atomic operations on a single thread.
+
+**ORM framework danger:** ORMs make it easy to accidentally write unsafe read-modify-write cycles instead of using atomic operations—a source of subtle bugs difficult to find by testing.
+
+#### 3.3.2. Explicit locking
+
+**In plain English:** If atomic operations aren't flexible enough, manually lock the rows you're about to update. Other transactions trying to update the same rows must wait for your lock to be released.
+
+**In technical terms:** The application explicitly locks objects that will be updated, performs a read-modify-write cycle, and any concurrent transaction trying to access the same object is forced to wait.
+
+**Example: Multiplayer game**
+
+```sql
+BEGIN TRANSACTION;
+
+-- Lock the game piece
+SELECT * FROM figures
+  WHERE name = 'robot' AND game_id = 222
+  FOR UPDATE;  -- Tells database to lock these rows
+
+-- Check if move is valid (custom game logic)
+-- Then update the position
+UPDATE figures SET position = 'c4' WHERE id = 1234;
+
+COMMIT;
+```
+
+<DiagramContainer title="EXPLICIT LOCKING EXAMPLE">
+  <ProcessFlow steps={[
+    {
+      title: "Player 1: SELECT...FOR UPDATE",
+      description: "Acquires lock on robot piece",
+      color: colors.blue
+    },
+    {
+      title: "Player 2: Tries to Move Same Piece",
+      description: "Blocked waiting for Player 1's lock",
+      color: colors.orange
+    },
+    {
+      title: "Player 1: Validates Move",
+      description: "Checks game rules in application code",
+      color: colors.blue
+    },
+    {
+      title: "Player 1: UPDATE and COMMIT",
+      description: "Releases lock",
+      color: colors.green
+    },
+    {
+      title: "Player 2: Acquires Lock",
+      description: "Now can proceed with their move",
+      color: colors.green
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Challenges:**
+
+1. **Easy to forget locks** somewhere in code → race condition
+2. **Deadlock risk** if locking multiple objects (databases auto-detect and abort one transaction)
+3. **Must retry** aborted transactions at application level
+
+#### 3.3.3. Automatically detecting lost updates
+
+**In plain English:** Let transactions run in parallel and do their read-modify-write cycles. If the database detects a lost update, automatically abort the transaction and force it to retry. You don't need special code—the database just handles it.
+
+**In technical terms:** Allow transactions to execute read-modify-write cycles in parallel. If the transaction manager detects a lost update, abort the transaction and force retry. Databases can perform this check efficiently with snapshot isolation.
+
+<DiagramContainer title="AUTOMATIC LOST UPDATE DETECTION">
+  <ComparisonTable
+    beforeTitle="Detects Lost Updates"
+    afterTitle="Does NOT Detect"
+    beforeColor={colors.green}
+    afterColor={colors.red}
+    items={[
+      {
+        label: "PostgreSQL",
+        before: "✓ repeatable read level",
+        after: ""
+      },
+      {
+        label: "Oracle",
+        before: "✓ serializable level",
+        after: ""
+      },
+      {
+        label: "SQL Server",
+        before: "✓ snapshot isolation",
+        after: ""
+      },
+      {
+        label: "MySQL/InnoDB",
+        before: "",
+        after: "✗ repeatable read level"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Advantages:**
+
+- No special database features required in application code
+- Less error-prone than forgetting locks
+- Happens automatically
+
+**Disadvantage:** Must retry aborted transactions at application level
+
+> **💡 Insight**
+>
+> Some argue a database must prevent lost updates to qualify as providing snapshot isolation, so by this definition MySQL doesn't provide true snapshot isolation. Lost update detection is a great feature because it's automatic and doesn't require special application code.
+
+#### 3.3.4. Conditional writes (compare-and-set)
+
+**In plain English:** Update the value only if it hasn't changed since you last read it. If someone else changed it in the meantime, your update fails and you need to retry. It's like saying "I'll buy this if the price is still $10" instead of blindly buying regardless of current price.
+
+**In technical terms:** In databases without transactions, a conditional write operation prevents lost updates by allowing an update only if the value hasn't changed since last read. If the current value doesn't match what you previously read, the update has no effect and the read-modify-write cycle must be retried.
+
+**Example: Preventing concurrent wiki edits**
+
+```sql
+-- May or may not be safe, depending on database implementation
+UPDATE wiki_pages
+SET content = 'new content'
+WHERE id = 1234
+  AND content = 'old content';  -- Only update if content unchanged
+```
+
+**Better approach with version numbers:**
+
+```sql
+UPDATE wiki_pages
+SET content = 'new content',
+    version = version + 1
+WHERE id = 1234
+  AND version = 42;  -- Only update if version still 42
+```
+
+<DiagramContainer title="COMPARE-AND-SET OPERATION">
+  <ProcessFlow steps={[
+    {
+      title: "Read",
+      description: "Get current value and version: (content='old', version=42)",
+      color: colors.blue
+    },
+    {
+      title: "Modify",
+      description: "User edits content in application",
+      color: colors.purple
+    },
+    {
+      title: "Write with Condition",
+      description: "UPDATE WHERE version=42",
+      color: colors.orange
+    },
+    {
+      title: "Success or Failure",
+      description: "Success if version still 42, failure if someone else updated",
+      color: colors.green
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Sometimes called "optimistic locking"** (as opposed to pessimistic locking with `SELECT FOR UPDATE`).
+
+**MVCC caveat:** In MVCC databases, there's often an exception to visibility rules for compare-and-set: values written by other transactions may be visible to the WHERE clause of UPDATE/DELETE, even if not otherwise visible in the snapshot.
+
+#### 3.3.5. Conflict resolution and replication
+
+**In plain English:** In replicated databases where data can be modified on multiple servers simultaneously, preventing lost updates becomes even harder. You can't use locks or conditional writes because there's no single "main copy" of the data—each server has its own copy that can be modified independently.
+
+**In technical terms:** In replicated databases with multi-leader or leaderless replication, concurrent writes can happen on different nodes and replicate asynchronously. Locks and conditional writes don't apply because there's no guarantee of a single up-to-date copy.
+
+**Alternative approaches:**
+
+<DiagramContainer title="CONFLICT RESOLUTION IN REPLICATION">
+  <CardGrid cards={[
+    {
+      title: "Commutative Operations (CRDTs)",
+      icon: "🔄",
+      color: colors.green,
+      description: "Operations that can be applied in any order",
+      items: [
+        "Incrementing a counter",
+        "Adding element to a set",
+        "Can be safely replicated",
+        "Same result regardless of order"
+      ]
+    },
+    {
+      title: "Multi-version Conflict Resolution",
+      icon: "🌿",
+      color: colors.purple,
+      description: "Create conflicting versions (siblings)",
+      items: [
+        "Allow concurrent writes",
+        "Create multiple versions",
+        "Application merges after the fact",
+        "Complex but flexible"
+      ]
+    },
+    {
+      title: "Last Write Wins (LWW)",
+      icon: "⚠️",
+      color: colors.red,
+      description: "Default in many systems (problematic!)",
+      items: [
+        "Simple but loses updates",
+        "Based on timestamp",
+        "Prone to lost updates",
+        "Default in many replicated DBs"
+      ]
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> Last Write Wins (LWW) is the default in many replicated databases, but it's prone to lost updates. If you're using multi-leader or leaderless replication, check whether your database uses LWW and consider whether that's acceptable for your use case.
+
+### 3.4. Write Skew and Phantoms
+
+**In plain English:** Write skew is a subtle race condition where two transactions read the same data, make decisions based on what they read, then each write to different places. Neither transaction sees the other's write, leading to a violated constraint. It's like two doctors both checking "are there 2 doctors on-call?" and both seeing "yes," then both going off-call, leaving zero doctors.
+
+**In technical terms:** Write skew occurs when two transactions read the same objects, then update some of those objects (different transactions may update different objects). It's a generalization of the lost update problem. In the special case where transactions update the same object, you get a dirty write or lost update; when they update different objects, you get write skew.
+
+#### 3.4.1. Characterizing write skew
+
+**Classic example: Hospital on-call scheduling**
+
+<DiagramContainer title="WRITE SKEW: ON-CALL DOCTORS">
+  <Column>
+    <Box color={colors.blue} variant="subtle">Initial: Aaliyah and Bryce both on-call</Box>
+    <Arrow direction="down" />
+    <Row>
+      <Group title="Aaliyah's Transaction" color={colors.purple}>
+        <Box color={colors.purple}>SELECT count from doctors<br/>WHERE on_call = true</Box>
+        <Box color={colors.green}>Result: 2</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple}>Check: 2 ≥ 1? ✓</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple}>UPDATE doctors<br/>SET on_call = false<br/>WHERE name = 'Aaliyah'</Box>
+      </Group>
+      <Group title="Bryce's Transaction" color={colors.cyan}>
+        <Box color={colors.cyan}>SELECT count from doctors<br/>WHERE on_call = true</Box>
+        <Box color={colors.green}>Result: 2</Box>
+        <Arrow direction="down" />
+        <Box color={colors.cyan}>Check: 2 ≥ 1? ✓</Box>
+        <Arrow direction="down" />
+        <Box color={colors.cyan}>UPDATE doctors<br/>SET on_call = false<br/>WHERE name = 'Bryce'</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.red}>Result: 0 doctors on-call (constraint violated!)</Box>
+  </Column>
+</DiagramContainer>
+
+**Why it happens:**
+
+1. Both transactions check the same condition (two doctors on-call)
+2. Both see the database in the same state (snapshot isolation)
+3. Both make different updates (to their own records)
+4. Constraint requires ≥1 doctor on-call, but result is 0
+
+**Why it's subtle:**
+
+- Not a dirty write (different objects updated)
+- Not a lost update (different objects updated)
+- Only obvious in hindsight: if transactions ran sequentially, the second doctor would be prevented from going off-call
+
+**How write skew generalizes lost updates:**
+
+<DiagramContainer title="WRITE-WRITE CONFLICT SPECTRUM">
+  <ProcessFlow steps={[
+    {
+      title: "Lost Update",
+      description: "Both transactions update SAME object",
+      color: colors.red
+    },
+    {
+      title: "Write Skew",
+      description: "Transactions read same data, update DIFFERENT objects",
+      color: colors.orange
+    },
+    {
+      title: "Phantom",
+      description: "Write changes result of search query",
+      color: colors.purple
+    }
+  ]} />
+</DiagramContainer>
+
+**Options for preventing write skew are limited:**
+
+<DiagramContainer title="PREVENTION STRATEGIES">
+  <ComparisonTable
+    beforeTitle="Does NOT Work"
+    afterTitle="Works"
+    beforeColor={colors.red}
+    afterColor={colors.green}
+    items={[
+      {
+        label: "Atomic operations",
+        before: "✗ Multiple objects involved",
+        after: ""
+      },
+      {
+        label: "Automatic detection",
+        before: "✗ PostgreSQL, MySQL, Oracle, SQL Server",
+        after: ""
+      },
+      {
+        label: "Constraints",
+        before: "✗ Most DBs don't support multi-object constraints",
+        after: ""
+      },
+      {
+        label: "Serializable isolation",
+        before: "",
+        after: "✓ True serializability prevents it"
+      },
+      {
+        label: "Explicit locks",
+        before: "",
+        after: "✓ SELECT...FOR UPDATE on dependent rows"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Using explicit locks to prevent write skew:**
+
+```sql
+BEGIN TRANSACTION;
+
+-- Lock all doctors on-call in this shift
+SELECT * FROM doctors
+  WHERE on_call = true
+    AND shift_id = 1234
+  FOR UPDATE;
+
+-- Now safe to update
+UPDATE doctors
+  SET on_call = false
+  WHERE name = 'Aaliyah'
+    AND shift_id = 1234;
+
+COMMIT;
+```
+
+#### 3.4.2. More examples of write skew
+
+<DiagramContainer title="WRITE SKEW SCENARIOS">
+  <CardGrid cards={[
+    {
+      title: "Meeting Room Booking",
+      icon: "🏢",
+      color: colors.blue,
+      description: "Preventing double-booking",
+      items: [
+        "Check for overlapping bookings",
+        "If none found, create booking",
+        "Two transactions can both see no conflict",
+        "Both insert, creating double-booking"
+      ]
+    },
+    {
+      title: "Multiplayer Game",
+      icon: "🎮",
+      color: colors.purple,
+      description: "Moving pieces on a board",
+      items: [
+        "Lock prevents moving same piece twice",
+        "Doesn't prevent moving to same position",
+        "Two players move different pieces to same spot",
+        "Violates game rules"
+      ]
+    },
+    {
+      title: "Username Registration",
+      icon: "👤",
+      color: colors.green,
+      description: "Claiming unique usernames",
+      items: [
+        "Check if username taken",
+        "If not, create account",
+        "Two users can both see name available",
+        "Solution: unique constraint"
+      ]
+    },
+    {
+      title: "Preventing Double-Spending",
+      icon: "💰",
+      color: colors.orange,
+      description: "Account balance checks",
+      items: [
+        "Insert spending item",
+        "Check total balance is positive",
+        "Two concurrent spends can both pass check",
+        "Balance goes negative"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+#### 3.4.3. Phantoms causing write skew
+
+**In plain English:** A phantom is when one transaction's write changes the result of another transaction's search query. The searched-for data is like a ghost—it wasn't there when you looked, but appears (or disappears) when another transaction writes.
+
+**In technical terms:** All write skew examples follow a similar pattern:
+
+<DiagramContainer title="WRITE SKEW PATTERN">
+  <ProcessFlow steps={[
+    {
+      title: "Step 1: SELECT",
+      description: "Check if requirement is satisfied (e.g., ≥2 doctors on-call, no room booking conflicts)",
+      color: colors.blue
+    },
+    {
+      title: "Step 2: Decide",
+      description: "Based on query result, decide whether to proceed",
+      color: colors.purple
+    },
+    {
+      title: "Step 3: Write",
+      description: "INSERT, UPDATE, or DELETE and commit",
+      color: colors.orange
+    },
+    {
+      title: "Step 4: Precondition Changed",
+      description: "The write changes the precondition—if you repeated the SELECT, you'd get a different result",
+      color: colors.red
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**The phantom problem:**
+
+In the doctor example, we could lock the rows in step 1 (`SELECT...FOR UPDATE`) to prevent write skew. But in other examples (meeting room booking, username registration, double-spending), the query checks for the **absence** of rows. `SELECT...FOR UPDATE` can't lock something that doesn't exist!
+
+**Example: Meeting room booking**
+
+```sql
+BEGIN TRANSACTION;
+
+-- Check for conflicting bookings (returns zero rows if room is free)
+SELECT COUNT(*) FROM bookings
+  WHERE room_id = 123
+    AND end_time   > '2025-01-01 12:00'
+    AND start_time < '2025-01-01 13:00';
+
+-- If zero, proceed to book
+INSERT INTO bookings
+  (room_id, start_time, end_time, user_id)
+  VALUES (123, '2025-01-01 12:00', '2025-01-01 13:00', 666);
+
+COMMIT;
+```
+
+**The problem:** `SELECT` returns zero rows, so `FOR UPDATE` has nothing to lock. Two concurrent transactions can both see zero conflicts and both insert bookings.
+
+> **💡 Insight**
+>
+> Phantoms are particularly tricky because they involve data that doesn't exist yet. You can't lock something that isn't there. This is why even snapshot isolation, which prevents phantoms in read-only queries, struggles with phantoms in read-write transactions.
+
+#### 3.4.4. Materializing conflicts
+
+**In plain English:** If the problem is "there's nothing to lock," create something to lock! For meeting rooms, create a table with rows for every room and time slot (e.g., 15-minute intervals for the next 6 months). Now you can lock the specific rows you need.
+
+**In technical terms:** Materializing conflicts means taking a phantom and turning it into a lock conflict on a concrete set of rows that exist in the database.
+
+<DiagramContainer title="MATERIALIZING CONFLICTS FOR MEETING ROOMS">
+  <ProcessFlow steps={[
+    {
+      title: "Create Lock Table",
+      description: "Table with all room-time combinations (e.g., Room 123, 12:00-12:15, 12:15-12:30, etc.)",
+      color: colors.blue
+    },
+    {
+      title: "Lock Relevant Rows",
+      description: "SELECT...FOR UPDATE on rows for desired room and time period",
+      color: colors.purple
+    },
+    {
+      title: "Check Conflicts",
+      description: "After acquiring locks, check for overlapping bookings",
+      color: colors.orange
+    },
+    {
+      title: "Insert Booking",
+      description: "Create booking if no conflicts",
+      color: colors.green
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Problems with materializing conflicts:**
+
+1. **Hard to figure out** how to materialize them correctly
+2. **Error-prone** to implement
+3. **Ugly** because concurrency control leaks into application data model
+4. **Last resort** when no alternative is possible
+
+**Better solution:** Serializable isolation level (much preferable in most cases)
+
+---
+
+## 4. Serializability
+
+**In plain English:** We've seen transactions are prone to many race conditions—some prevented by read committed and snapshot isolation, but others (like write skew and phantoms) are not. Wouldn't it be great if the database just prevented all race conditions automatically? That's serializability: the strongest isolation level.
+
+**In technical terms:** Serializable isolation guarantees that even though transactions may execute in parallel, the end result is the same as if they had executed one at a time, serially, without any concurrency. The database prevents all possible race conditions.
+
+**The frustrating reality:**
+
+<DiagramContainer title="CHALLENGES WITH ISOLATION LEVELS">
+  <CardGrid cards={[
+    {
+      title: "Hard to Understand",
+      icon: "🤔",
+      color: colors.orange,
+      description: "Inconsistently implemented across databases",
+      items: [
+        "'Repeatable read' varies significantly",
+        "Snapshot isolation vs. serializability",
+        "Marketing terms vs. actual guarantees"
+      ]
+    },
+    {
+      title: "Hard to Test",
+      icon: "🧪",
+      color: colors.red,
+      description: "Difficult to verify safety",
+      items: [
+        "Can't tell if code is safe at a given level",
+        "Large apps: unaware of all concurrent access",
+        "No good tools to detect race conditions"
+      ]
+    },
+    {
+      title: "Nondeterministic",
+      icon: "🎲",
+      color: colors.purple,
+      description: "Problems only occur with unlucky timing",
+      items: [
+        "Testing doesn't reliably catch issues",
+        "Race conditions are rare in testing",
+        "Appear in production under load"
+      ]
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+**Since the 1970s, researchers have had a simple answer:** Use serializable isolation!
+
+**But if serializability is so much better, why isn't everyone using it?**
+
+To answer this, we need to examine the options for implementing serializability and how they perform. Three techniques:
+
+<DiagramContainer title="SERIALIZABILITY IMPLEMENTATION APPROACHES">
+  <ProcessFlow steps={[
+    {
+      title: "1. Actual Serial Execution",
+      description: "Literally execute transactions one at a time on a single thread",
+      color: colors.blue,
+      icon: "➡️"
+    },
+    {
+      title: "2. Two-Phase Locking (2PL)",
+      description: "For decades the only viable option; readers block writers and vice versa",
+      color: colors.orange,
+      icon: "🔒"
+    },
+    {
+      title: "3. Serializable Snapshot Isolation (SSI)",
+      description: "Optimistic approach; detect conflicts and abort instead of blocking",
+      color: colors.green,
+      icon: "✨"
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+### 4.1. Actual Serial Execution
+
+**In plain English:** The simplest way to avoid concurrency problems is to eliminate concurrency entirely—just execute one transaction at a time. No parallelism, no race conditions. It sounds naive, but with modern hardware and careful design, it actually works!
+
+**In technical terms:** Execute only one transaction at a time, in serial order, on a single thread. By removing concurrency entirely, the resulting isolation is by definition serializable.
+
+**Why this seemed impossible until the 2000s:**
+
+For 30 years, multi-threaded concurrency was considered essential for performance. What changed?
+
+<DiagramContainer title="DEVELOPMENTS ENABLING SERIAL EXECUTION">
+  <CardGrid cards={[
+    {
+      title: "RAM Became Cheap",
+      icon: "💾",
+      color: colors.blue,
+      description: "Keep entire active dataset in memory",
+      items: [
+        "No waiting for disk I/O",
+        "Transactions execute much faster",
+        "Single-threaded throughput sufficient"
+      ]
+    },
+    {
+      title: "OLTP Are Short",
+      icon: "⚡",
+      color: colors.green,
+      description: "Transaction characteristics recognized",
+      items: [
+        "OLTP: short, small number of reads/writes",
+        "Analytics: read-only, can use snapshots",
+        "Long-running queries outside serial loop"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**Systems using this approach:** VoltDB/H-Store, Redis, Datomic
+
+**Performance:** Can sometimes perform better than multi-threaded systems by avoiding coordination overhead of locking. However, throughput is limited to a single CPU core.
+
+#### 4.1.1. Encapsulating transactions in stored procedures
+
+**The traditional approach problem:**
+
+<DiagramContainer title="TRADITIONAL VS. STORED PROCEDURE TRANSACTIONS">
+  <ComparisonTable
+    beforeTitle="Interactive Client/Server"
+    afterTitle="Stored Procedures"
+    beforeColor={colors.red}
+    afterColor={colors.green}
+    items={[
+      {
+        label: "Execution",
+        before: "Query → Result → Think → Query → ...",
+        after: "Submit entire transaction code upfront"
+      },
+      {
+        label: "Network",
+        before: "Many round-trips",
+        after: "One round-trip"
+      },
+      {
+        label: "Concurrency",
+        before: "Must process multiple transactions to hide network latency",
+        after: "Can execute serially without performance penalty"
+      },
+      {
+        label: "Speed",
+        before: "Slow due to network waits",
+        after: "Fast if all data in memory"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Traditional interactive transaction:**
+
+1. Application makes query
+2. Waits for network round-trip
+3. Processes result
+4. Makes another query based on result
+5. Repeat...
+
+**Problem for serial execution:** Database would spend most time waiting for network I/O. Throughput would be terrible.
+
+**Solution:** Submit entire transaction code to database as a **stored procedure**.
+
+<DiagramContainer title="INTERACTIVE VS STORED PROCEDURE EXECUTION">
+  <Row>
+    <Column>
+      <Group title="Interactive Transaction" color={colors.orange}>
+        <Box color={colors.orange}>Client: SELECT</Box>
+        <Arrow direction="down" label="network" />
+        <Box color={colors.orange}>DB: Result</Box>
+        <Arrow direction="down" label="network" />
+        <Box color={colors.orange}>Client: UPDATE</Box>
+        <Arrow direction="down" label="network" />
+        <Box color={colors.orange}>DB: OK</Box>
+        <Box color={colors.red} variant="subtle">Multiple network round-trips</Box>
+      </Group>
+    </Column>
+    <Column>
+      <Group title="Stored Procedure" color={colors.green}>
+        <Box color={colors.green}>Client: Submit procedure</Box>
+        <Arrow direction="down" label="network" />
+        <Box color={colors.green}>DB: Execute entirely</Box>
+        <Box color={colors.green}>SELECT, UPDATE, etc.</Box>
+        <Arrow direction="down" label="network" />
+        <Box color={colors.green}>DB: Final result</Box>
+        <Box color={colors.green} variant="subtle">One network round-trip</Box>
+      </Group>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+#### 4.1.2. Pros and cons of stored procedures
+
+**Stored procedures have a bad reputation:**
+
+<DiagramContainer title="STORED PROCEDURE PROBLEMS (TRADITIONAL)">
+  <CardGrid cards={[
+    {
+      title: "Vendor-Specific Languages",
+      icon: "🔧",
+      color: colors.red,
+      items: [
+        "Oracle: PL/SQL",
+        "SQL Server: T-SQL",
+        "PostgreSQL: PL/pgSQL",
+        "Archaic, ugly syntax",
+        "Lack modern language features"
+      ]
+    },
+    {
+      title: "Hard to Manage",
+      icon: "😰",
+      color: colors.orange,
+      items: [
+        "Difficult to debug",
+        "Awkward version control",
+        "Tricky to test",
+        "Hard to integrate with monitoring"
+      ]
+    },
+    {
+      title: "Performance Sensitive",
+      icon: "🔥",
+      color: colors.purple,
+      items: [
+        "Database shared by many app servers",
+        "Badly written procedure affects everyone",
+        "More trouble than app server code"
+      ]
+    },
+    {
+      title: "Security Risk",
+      icon: "🔒",
+      color: colors.red,
+      items: [
+        "In multitenant systems",
+        "Untrusted code in DB kernel",
+        "Security vulnerability"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**Modern implementations overcome these issues:**
+
+<DiagramContainer title="MODERN STORED PROCEDURE IMPLEMENTATIONS">
+  <CardGrid cards={[
+    {
+      title: "VoltDB",
+      color: colors.blue,
+      description: "Java or Groovy"
+    },
+    {
+      title: "Datomic",
+      color: colors.purple,
+      description: "Java or Clojure"
+    },
+    {
+      title: "Redis",
+      color: colors.orange,
+      description: "Lua scripting"
+    },
+    {
+      title: "MongoDB",
+      color: colors.green,
+      description: "JavaScript"
+    }
+  ]} columns={4} />
+</DiagramContainer>
+
+**Additional benefits:**
+
+- **GraphQL deployments**: Validation logic can live in database stored procedures when proxy doesn't support complex logic
+- **State machine replication**: VoltDB executes same stored procedure on each replica instead of copying writes (requires deterministic execution)
+
+#### 4.1.3. Sharding
+
+**In plain English:** A single CPU core can only process so many transactions per second. To scale beyond that, split your data across multiple CPU cores or machines, giving each its own independent transaction processing thread.
+
+**In technical terms:** Single-threaded execution limits throughput to one CPU core's speed. To scale, shard your data so each transaction only reads/writes data within a single shard. Each shard has its own transaction processing thread running independently.
+
+<DiagramContainer title="SHARDING FOR SERIAL EXECUTION">
+  <Row>
+    <Group title="Single Shard Transactions" color={colors.green}>
+      <Box color={colors.green}>Shard A</Box>
+      <Box color={colors.green}>CPU Core 1</Box>
+      <Box color={colors.green} variant="subtle">Fast throughput</Box>
+    </Group>
+    <Group title="Single Shard Transactions" color={colors.green}>
+      <Box color={colors.green}>Shard B</Box>
+      <Box color={colors.green}>CPU Core 2</Box>
+      <Box color={colors.green} variant="subtle">Fast throughput</Box>
+    </Group>
+    <Group title="Cross-Shard Transaction" color={colors.red}>
+      <Box color={colors.red}>Shards A + B</Box>
+      <Box color={colors.red}>Coordination needed</Box>
+      <Box color={colors.red} variant="subtle">Much slower</Box>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+**Performance characteristics:**
+
+| Transaction Type | Throughput | Scalability |
+|-----------------|------------|-------------|
+| **Single-shard** | Very high | Linear with CPU cores |
+| **Cross-shard** | ~1,000/sec (VoltDB) | Does not scale with machines |
+
+**Why cross-shard is slow:** Must coordinate across all touched shards in lock-step to ensure serializability. Requires additional coordination overhead.
+
+**Whether this works depends on data structure:**
+
+- **Simple key-value data**: Easily sharded
+- **Data with secondary indexes**: Requires lots of cross-shard coordination
+
+> **💡 Insight**
+>
+> The success of serial execution depends heavily on whether your workload can be partitioned to avoid cross-shard transactions. For some applications this works great; for others, cross-shard coordination becomes a bottleneck that negates the benefits.
+
+#### 4.1.4. Summary of serial execution
+
+Serial execution of transactions is viable within certain constraints:
+
+<DiagramContainer title="REQUIREMENTS FOR SERIAL EXECUTION">
+  <CardGrid cards={[
+    {
+      title: "Fast Transactions",
+      icon: "⚡",
+      color: colors.blue,
+      description: "Every transaction must be small and fast",
+      items: [
+        "One slow transaction stalls everything",
+        "Use stored procedures",
+        "All data in memory"
+      ]
+    },
+    {
+      title: "Active Dataset in Memory",
+      icon: "💾",
+      color: colors.purple,
+      description: "Working set must fit in RAM",
+      items: [
+        "Rarely accessed data can be on disk",
+        "But accessing it would be very slow",
+        "Limits dataset size"
+      ]
+    },
+    {
+      title: "Low Write Throughput",
+      icon: "✍️",
+      color: colors.orange,
+      description: "Single CPU core must handle load",
+      items: [
+        "Or transactions must be shardable",
+        "Without cross-shard coordination",
+        "Cross-shard throughput hard to scale"
+      ]
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+### 4.2. Two-Phase Locking (2PL)
+
+**In plain English:** Two-phase locking is like a strict library where readers and writers can never be in the same room at the same time. If someone is reading a book, nobody can write in it. If someone is writing in a book, nobody can read it. Everyone has to wait their turn. This prevents all race conditions but can make things very slow.
+
+**In technical terms:** For around 30 years, two-phase locking (2PL) was the only widely used algorithm for serializability in databases. It makes lock requirements much stronger than simple dirty write prevention: readers block writers AND writers block readers.
+
+**Important note:** 2PL is NOT 2PC!
+
+<DiagramContainer title="2PL vs 2PC - DIFFERENT THINGS!">
+  <Row>
+    <Group title="Two-Phase Locking (2PL)" color={colors.blue}>
+      <Box color={colors.blue}>Provides:</Box>
+      <Box color={colors.blue} variant="subtle">Serializable isolation</Box>
+      <Box color={colors.blue}>Purpose:</Box>
+      <Box color={colors.blue} variant="subtle">Prevent race conditions</Box>
+    </Group>
+    <Group title="Two-Phase Commit (2PC)" color={colors.purple}>
+      <Box color={colors.purple}>Provides:</Box>
+      <Box color={colors.purple} variant="subtle">Atomic commit</Box>
+      <Box color={colors.purple}>Purpose:</Box>
+      <Box color={colors.purple} variant="subtle">Distributed transactions</Box>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+**2PL locking rules:**
+
+<DiagramContainer title="TWO-PHASE LOCKING RULES">
+  <ProcessFlow steps={[
+    {
+      title: "Transaction A Reads",
+      description: "Transaction B wants to write → B must wait for A to commit/abort",
+      color: colors.blue
+    },
+    {
+      title: "Transaction A Writes",
+      description: "Transaction B wants to read → B must wait for A to commit/abort",
+      color: colors.purple
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Key difference from snapshot isolation:**
+
+| Approach | Mantra |
+|----------|--------|
+| **Snapshot isolation** | Readers never block writers, writers never block readers |
+| **Two-phase locking** | Readers block writers, writers block readers |
+
+**Benefit:** Protects against all race conditions (lost updates, write skew, phantoms, etc.)
+
+#### 4.2.1. Implementation of two-phase locking
+
+**Used by:** MySQL (InnoDB) serializable level, SQL Server serializable level, Db2 repeatable read level
+
+**Lock mechanism:**
+
+<DiagramContainer title="SHARED VS EXCLUSIVE LOCKS">
+  <ComparisonTable
+    beforeTitle="Shared Mode (Read Lock)"
+    afterTitle="Exclusive Mode (Write Lock)"
+    beforeColor={colors.blue}
+    afterColor={colors.orange}
+    items={[
+      {
+        label: "Who can hold",
+        before: "Multiple transactions simultaneously",
+        after: "Only one transaction"
+      },
+      {
+        label: "Acquired for",
+        before: "Reading an object",
+        after: "Writing an object"
+      },
+      {
+        label: "Blocks",
+        before: "Exclusive locks only",
+        after: "All other locks (shared and exclusive)"
+      },
+      {
+        label: "Upgrade",
+        before: "Can upgrade to exclusive",
+        after: "N/A"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Locking protocol:**
+
+1. **To read**: Acquire shared lock (multiple transactions can hold simultaneously, but must wait if exclusive lock exists)
+2. **To write**: Acquire exclusive lock (no other locks can exist; must wait for all existing locks)
+3. **Upgrade**: Transaction can upgrade shared → exclusive lock
+4. **Hold until end**: After acquiring locks, must hold until commit or abort
+
+**Where "two-phase" comes from:**
+
+<DiagramContainer title="TWO PHASES OF 2PL">
+  <Row>
+    <Group title="Phase 1: Growing" color={colors.blue}>
+      <Box color={colors.blue}>While transaction executes</Box>
+      <Arrow direction="down" />
+      <Box color={colors.blue}>Locks are acquired</Box>
+    </Group>
+    <Arrow direction="right" />
+    <Group title="Phase 2: Shrinking" color={colors.green}>
+      <Box color={colors.green}>At end of transaction</Box>
+      <Arrow direction="down" />
+      <Box color={colors.green}>All locks are released</Box>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+**Deadlocks:**
+
+With many locks in use, deadlocks happen easily:
+- Transaction A waiting for B's lock
+- Transaction B waiting for A's lock
+- Database auto-detects and aborts one transaction
+- Application must retry aborted transaction
+
+#### 4.2.2. Performance of two-phase locking
+
+**Why 2PL has poor performance:**
+
+<DiagramContainer title="2PL PERFORMANCE PROBLEMS">
+  <CardGrid cards={[
+    {
+      title: "Lock Overhead",
+      icon: "🔒",
+      color: colors.orange,
+      description: "Acquiring and releasing many locks",
+      items: [
+        "CPU overhead",
+        "Memory for lock tracking",
+        "Coordination between threads"
+      ]
+    },
+    {
+      title: "Reduced Concurrency",
+      icon: "🚦",
+      color: colors.red,
+      description: "Transactions waiting for each other",
+      items: [
+        "Any potential race condition causes waiting",
+        "One waits for other to complete",
+        "Throughput limited"
+      ]
+    },
+    {
+      title: "Unstable Latencies",
+      icon: "📈",
+      color: colors.purple,
+      description: "Unpredictable response times",
+      items: [
+        "Very slow at high percentiles",
+        "One slow transaction blocks many others",
+        "Cascading delays"
+      ]
+    },
+    {
+      title: "Frequent Deadlocks",
+      icon: "💥",
+      color: colors.orange,
+      description: "Much more common than with weak isolation",
+      items: [
+        "Aborted transactions must retry",
+        "Work done all over again",
+        "Significant wasted effort"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**Worst-case scenario example:**
+
+A transaction reading an entire table (backup, analytics, integrity check):
+1. Takes shared lock on entire table
+2. Must wait for all in-progress writes to complete
+3. While reading (potentially hours), all writes are blocked
+4. Database becomes unavailable for writes
+
+> **💡 Insight**
+>
+> 2PL's fundamental problem is that it's pessimistic—if anything might possibly go wrong, wait. This conservative approach guarantees safety but sacrifices performance. In high-contention workloads, the database can grind to a halt.
+
+#### 4.2.3. Predicate locks
+
+**The phantom problem (revisited):**
+
+In write skew examples, one transaction changes the results of another's search query. To prevent this, we need to lock not just existing rows, but **all objects that match some search condition**.
+
+**In plain English:** Instead of locking specific rows (like "Account #123"), lock a pattern (like "all accounts with balance < $100"). This prevents other transactions from inserting, updating, or deleting anything that matches your pattern.
+
+**In technical terms:** A **predicate lock** belongs to all objects that match some search condition, rather than a particular object.
+
+**Example: Meeting room booking**
+
+```sql
+SELECT * FROM bookings
+  WHERE room_id = 123
+    AND end_time   > '2025-01-01 12:00'
+    AND start_time < '2025-01-01 13:00';
+```
+
+**Predicate lock works as follows:**
+
+<DiagramContainer title="PREDICATE LOCK MECHANISM">
+  <ProcessFlow steps={[
+    {
+      title: "Transaction A: Read with Condition",
+      description: "Acquires shared predicate lock on search condition",
+      color: colors.blue
+    },
+    {
+      title: "Transaction B: Wants to Insert/Update",
+      description: "Must check if new/old value matches any predicate lock",
+      color: colors.purple
+    },
+    {
+      title: "If Match Found",
+      description: "Transaction B must wait until A commits/aborts",
+      color: colors.orange
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Key property:** Applies even to objects that don't yet exist in the database (phantoms)!
+
+If two-phase locking includes predicate locks, the database prevents all forms of write skew and other race conditions → isolation becomes serializable.
+
+#### 4.2.4. Index-range locks
+
+**The problem with predicate locks:** Performance is poor. Checking for matching locks becomes time-consuming with many active transactions.
+
+**The solution:** **Index-range locking** (also called next-key locking)—a simplified approximation of predicate locking.
+
+**In plain English:** Instead of locking exactly what you need, lock a slightly bigger range. It's safe because anything matching your exact condition will definitely be in the bigger range. It's like locking the entire bookshelf instead of just one book.
+
+**In technical terms:** Safe to simplify a predicate by making it match a greater set of objects. Any write matching the original predicate will also match the approximation.
+
+<DiagramContainer title="INDEX-RANGE LOCKING EXAMPLE">
+  <Column>
+    <Box color={colors.blue} variant="subtle">Original predicate: Room 123 between 12:00-13:00</Box>
+    <Arrow direction="down" />
+    <Row>
+      <Group title="Approximation 1" color={colors.purple}>
+        <Box color={colors.purple}>Lock all bookings</Box>
+        <Box color={colors.purple}>for Room 123</Box>
+        <Box color={colors.purple}>at any time</Box>
+      </Group>
+      <Group title="Approximation 2" color={colors.cyan}>
+        <Box color={colors.cyan}>Lock all rooms</Box>
+        <Box color={colors.cyan}>between</Box>
+        <Box color={colors.cyan}>12:00-13:00</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.green}>Both approximations are safe—they include the original condition</Box>
+  </Column>
+</DiagramContainer>
+
+**How it works with indexes:**
+
+**Scenario 1: Index on room_id**
+- Database finds existing bookings for room 123 using index
+- Attaches shared lock to this index entry
+- Any transaction trying to insert/update room 123 booking must update same index entry
+- Encounters the shared lock and must wait
+
+**Scenario 2: Index on time**
+- Database finds bookings overlapping 12:00-13:00 using time index
+- Attaches shared lock to range of values in index
+- Any transaction trying to insert/update overlapping booking must touch same index range
+- Encounters the lock and must wait
+
+**Fallback:** If no suitable index exists, database can use shared lock on entire table (bad for performance but safe).
+
+> **💡 Insight**
+>
+> Index-range locks aren't as precise as predicate locks (they may lock more than strictly necessary), but they have much lower overhead. This trade-off makes them practical for production systems, whereas pure predicate locks would be too slow.
+
+### 4.3. Serializable Snapshot Isolation (SSI)
+
+**In plain English:** SSI is like having everyone proceed optimistically (no blocking), but with a security camera checking if anything went wrong. If two people's actions would have conflicted, one gets caught by the camera and has to redo their work. Most of the time everyone proceeds smoothly; conflicts are rare enough that the occasional retry is worth the better performance.
+
+**In technical terms:** Serializable Snapshot Isolation provides full serializability with only a small performance penalty compared to snapshot isolation. It's an **optimistic concurrency control** technique—instead of blocking when something might go wrong, transactions proceed anyway and are checked at commit time.
+
+**The breakthrough:** SSI was first described in 2008—comparatively new! Prior to this, the choice was:
+
+- **Serializable isolation** with poor performance (2PL) or limited scale (serial execution)
+- **Weak isolation** with good performance but prone to race conditions
+
+SSI bridges this gap.
+
+**Used by:**
+
+<DiagramContainer title="SSI IMPLEMENTATIONS">
+  <CardGrid cards={[
+    {
+      title: "Single-Node Databases",
+      color: colors.blue,
+      items: [
+        "PostgreSQL (serializable level)",
+        "SQL Server In-Memory OLTP/Hekaton",
+        "HyPer"
+      ]
+    },
+    {
+      title: "Distributed Databases",
+      color: colors.purple,
+      items: [
+        "CockroachDB",
+        "FoundationDB"
+      ]
+    },
+    {
+      title: "Embedded Storage",
+      color: colors.green,
+      items: [
+        "BadgerDB"
+      ]
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+#### 4.3.1. Pessimistic versus optimistic concurrency control
+
+<DiagramContainer title="PESSIMISTIC VS OPTIMISTIC CONCURRENCY">
+  <ComparisonTable
+    beforeTitle="Pessimistic (2PL, Serial Execution)"
+    afterTitle="Optimistic (SSI)"
+    beforeColor={colors.orange}
+    afterColor={colors.green}
+    items={[
+      {
+        label: "Philosophy",
+        before: "If anything might go wrong, wait until safe",
+        after: "Continue anyway, check at commit time"
+      },
+      {
+        label: "Blocking",
+        before: "Transactions wait for locks",
+        after: "Transactions proceed without blocking"
+      },
+      {
+        label: "When conflict detected",
+        before: "Before operation",
+        after: "At commit (after work done)"
+      },
+      {
+        label: "High contention",
+        before: "Slow but no wasted work",
+        after: "Many aborts, wasted work"
+      },
+      {
+        label: "Spare capacity",
+        before: "Underutilizes resources",
+        after: "Better throughput"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Serial execution** is pessimistic to the extreme: equivalent to an exclusive lock on entire database for each transaction's duration. Compensate by making transactions very fast.
+
+**SSI optimistic approach:** When transaction wants to commit, database checks whether anything bad happened (isolation violated). If so, abort and retry. Only serially-executed transactions allowed to commit.
+
+**Performance characteristics:**
+
+- **High contention**: Optimistic performs badly (many aborts, wasted work from retries)
+- **Spare capacity + low contention**: Optimistic performs better than pessimistic
+- **Commutative operations**: Reduce contention (e.g., concurrent counter increments don't conflict if not read in same transaction)
+
+> **💡 Insight**
+>
+> The key insight: SSI is based on snapshot isolation (all reads from consistent snapshot) + an algorithm for detecting serialization conflicts. It combines the performance benefits of snapshot isolation with the safety guarantees of serializability.
+
+#### 4.3.2. Decisions based on an outdated premise
+
+**The write skew pattern (revisited):**
+
+Recall from write skew: a transaction reads data, makes a decision based on what it saw, then writes. Under snapshot isolation, the data may have changed by commit time—the premise may no longer be true.
+
+**In plain English:** You made a decision based on old information (like checking "are there 2 doctors on-call?" and seeing "yes"), but by the time you act on that decision (going off-call), the information is outdated (the other doctor already went off-call).
+
+**In technical terms:** The transaction takes an action based on a **premise** (a fact true at transaction start). When committing, the premise may no longer be true because other transactions modified the data. To provide serializability, the database must detect when a transaction acted on an outdated premise and abort it.
+
+**The challenge:** The database doesn't know how application logic uses query results. To be safe, it must assume any change in query results means the transaction's writes may be invalid—there may be a causal dependency between queries and writes.
+
+**Two cases to consider:**
+
+<DiagramContainer title="SSI DETECTION SCENARIOS">
+  <CardGrid cards={[
+    {
+      title: "Stale MVCC Reads",
+      icon: "👁️",
+      color: colors.blue,
+      description: "Uncommitted write occurred before the read",
+      items: [
+        "Transaction reads from snapshot",
+        "Ignores uncommitted writes (MVCC rule)",
+        "By commit time, those writes have committed",
+        "Read was based on stale data"
+      ]
+    },
+    {
+      title: "Writes Affecting Prior Reads",
+      icon: "✍️",
+      color: colors.purple,
+      description: "Write occurs after the read",
+      items: [
+        "Transaction reads data",
+        "Another transaction modifies that data",
+        "Original transaction's premise invalidated",
+        "Decision based on now-changed data"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+#### 4.3.3. Detecting stale MVCC reads
+
+**The scenario:**
+
+<DiagramContainer title="DETECTING STALE MVCC READS">
+  <ProcessFlow steps={[
+    {
+      title: "Transaction 42 Starts",
+      description: "Modifies Aaliyah's on-call status (uncommitted)",
+      color: colors.orange
+    },
+    {
+      title: "Transaction 43 Starts",
+      description: "Reads Aaliyah's status, sees on_call=true (ignoring txn 42 per MVCC)",
+      color: colors.blue
+    },
+    {
+      title: "Transaction 42 Commits",
+      description: "Aaliyah's status now committed as on_call=false",
+      color: colors.orange
+    },
+    {
+      title: "Transaction 43 Wants to Commit",
+      description: "Database detects: ignored write from txn 42 has now committed",
+      color: colors.red
+    },
+    {
+      title: "Transaction 43 Aborted",
+      description: "Premise no longer valid—must retry",
+      color: colors.red
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**How it works:**
+
+1. **Track ignored writes**: Database remembers when a transaction ignores another's writes due to MVCC visibility rules
+2. **Check at commit**: When transaction wants to commit, check if any ignored writes have now committed
+3. **Abort if stale**: If so, the transaction must be aborted
+
+**Why wait until commit?** Why not abort immediately when stale read detected?
+
+- **Read-only transactions** don't need to abort (no risk of write skew)
+- Database doesn't know yet if transaction will later write
+- Transaction 42 may still abort (read turns out not to be stale after all)
+- Avoiding unnecessary aborts preserves snapshot isolation's support for long-running reads
+
+#### 4.3.4. Detecting writes that affect prior reads
+
+**The scenario:**
+
+<DiagramContainer title="DETECTING WRITES AFFECTING PRIOR READS">
+  <Column>
+    <Row>
+      <Group title="Transaction 42" color={colors.blue}>
+        <Box color={colors.blue}>Read doctors WHERE shift_id=1234</Box>
+        <Arrow direction="down" />
+        <Box color={colors.blue}>Sees 2 doctors on-call</Box>
+        <Arrow direction="down" />
+        <Box color={colors.blue}>UPDATE: Set Aaliyah off-call</Box>
+      </Group>
+      <Group title="Transaction 43" color={colors.purple}>
+        <Box color={colors.purple}>Read doctors WHERE shift_id=1234</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple}>Sees 2 doctors on-call</Box>
+        <Arrow direction="down" />
+        <Box color={colors.purple}>UPDATE: Set Bryce off-call</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.orange}>Both transactions notify each other that prior reads are affected</Box>
+  </Column>
+</DiagramContainer>
+
+**How it works (similar to index-range locks, but without blocking):**
+
+1. **Record reads**: When transaction searches (e.g., `WHERE shift_id = 1234`), use index entry to record which transactions read this data
+2. **Check on write**: When a transaction writes, look in indexes for other transactions that recently read affected data
+3. **Notify conflicts**: Instead of blocking, simply notify those transactions that their data may be outdated (acts as a "tripwire")
+4. **Check at commit**: When notified transaction tries to commit, check if conflicting write has committed
+
+**Example from diagram:**
+
+- Transaction 43 notifies Transaction 42: your read is outdated
+- Transaction 42 notifies Transaction 43: your read is outdated
+- **Transaction 42 commits first**: Successful (Transaction 43's write hasn't committed yet)
+- **Transaction 43 tries to commit**: Conflicting write from 42 already committed → must abort
+
+**Tracking granularity trade-off:**
+
+- **Detailed tracking**: Precise about which transactions abort, but high bookkeeping overhead
+- **Coarse tracking**: Fast, but may abort more transactions than strictly necessary
+
+#### 4.3.5. Performance of serializable snapshot isolation
+
+**Engineering details matter:** Many factors affect practical performance. Trade-off example: granularity of tracking reads/writes.
+
+**Compared to two-phase locking:**
+
+<DiagramContainer title="SSI VS 2PL">
+  <ComparisonTable
+    beforeTitle="Two-Phase Locking"
+    afterTitle="Serializable Snapshot Isolation"
+    beforeColor={colors.orange}
+    afterColor={colors.green}
+    items={[
+      {
+        label: "Blocking",
+        before: "Transactions wait for locks",
+        after: "No blocking (one doesn't wait for another)"
+      },
+      {
+        label: "Query latency",
+        before: "Unpredictable, high variance",
+        after: "More predictable, lower variance"
+      },
+      {
+        label: "Read-only queries",
+        before: "May need locks",
+        after: "Run on snapshot without any locks"
+      },
+      {
+        label: "Read-heavy workloads",
+        before: "Poor performance",
+        after: "Excellent performance"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Compared to serial execution:**
+
+- **Not limited to single CPU core throughput**
+- FoundationDB distributes conflict detection across machines
+- Can scale to very high throughput
+- Transactions can read/write data in multiple shards while ensuring serializability
+
+**Compared to non-serializable snapshot isolation:**
+
+- Checking for violations introduces overhead
+- Debate about whether it's worth it:
+  - Some: "Serializability checking not worth the cost"
+  - Others: "Performance now so good, no need for weaker isolation"
+
+**Abort rate significantly affects performance:**
+
+- Long-running read-write transactions likely to conflict and abort
+- SSI requires **fairly short** read-write transactions
+- Long-running read-only transactions are fine
+- Less sensitive to slow transactions than 2PL or serial execution
+
+> **💡 Insight**
+>
+> SSI represents a major advancement in database research—it's the first practical algorithm offering true serializability with performance approaching snapshot isolation. The key innovation: detect conflicts instead of preventing them, allowing much more concurrency.
+
+---
+
+## 5. Distributed Transactions
+
+**In plain English:** Everything we've discussed so far works whether your database is on one machine or spread across many. But when a single transaction needs to update data on multiple machines, ensuring atomicity becomes much harder. You can't just tell each machine "commit now" because some might succeed while others fail, leaving your data inconsistent across machines.
+
+**In technical terms:** Concurrency control for isolation (the "I" in ACID) applies similarly to both single-node and distributed databases. Consistency and durability also don't change much. However, **atomicity** requires special care in distributed transactions.
+
+### 5.1. The Atomic Commitment Problem
+
+**Single-node atomicity:**
+
+On a single database node, atomicity is implemented by the storage engine:
+
+<DiagramContainer title="SINGLE-NODE ATOMIC COMMIT">
+  <ProcessFlow steps={[
+    {
+      title: "Client Requests Commit",
+      description: "Application asks database to commit transaction",
+      color: colors.blue
+    },
+    {
+      title: "Write Data to Disk",
+      description: "Database makes writes durable (write-ahead log)",
+      color: colors.purple
+    },
+    {
+      title: "Write Commit Record",
+      description: "Append commit record to log on disk (the deciding moment!)",
+      color: colors.orange
+    },
+    {
+      title: "Result Determined",
+      description: "If commit record written: committed. If crash before: aborted.",
+      color: colors.green
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Key point:** It's a **single device** (one disk controller, on one machine) that makes the commit atomic. Before the commit record is written, abort is still possible. After it's written, the transaction is committed (even if database crashes).
+
+**Multi-node problem:**
+
+What if multiple nodes are involved? Examples:
+- Multi-object transaction in sharded database
+- Global secondary index (index on different node from primary data)
+
+Simply sending commit requests to all nodes doesn't work:
+
+<DiagramContainer title="NAIVE MULTI-NODE COMMIT FAILS">
+  <Column>
+    <Box color={colors.blue} variant="subtle">Application sends "commit" to all nodes</Box>
+    <Arrow direction="down" />
+    <Row>
+      <Group title="Possible Failures" color={colors.red}>
+        <Box color={colors.red}>Constraint violation on some nodes</Box>
+        <Box color={colors.red}>Network loses some commit requests</Box>
+        <Box color={colors.red}>Some nodes crash before commit</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.red}>Result: Transaction commits on some nodes, aborts on others!</Box>
+  </Column>
+</DiagramContainer>
+
+**Why this is catastrophic:**
+
+<DiagramContainer title="INCONSISTENT COMMIT PROBLEM">
+  <ProcessFlow steps={[
+    {
+      title: "User 1: Transaction Partially Commits",
+      description: "Commits on DB 1, fails on DB 2",
+      color: colors.red
+    },
+    {
+      title: "User 2: Reads from DB 2",
+      description: "Reads data from successful commit on DB 2",
+      color: colors.blue
+    },
+    {
+      title: "User 1: Discovers Failure",
+      description: "Learns commit failed on DB 1",
+      color: colors.orange
+    },
+    {
+      title: "Impossible to Undo",
+      description: "Can't abort—User 2 already saw committed data on DB 2!",
+      color: colors.red
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+Once data is committed on one node, it becomes visible to other transactions (under read committed or stronger isolation). If it's later aborted on another node, transactions that read the "committed" data would have to be reverted too—impossible!
+
+**The solution:** Ensure all nodes involved in a transaction either **all commit** or **all abort**. This is the **atomic commitment problem**.
+
+### 5.2. Two-Phase Commit (2PC)
+
+**In plain English:** Two-phase commit is like a wedding ceremony. The officiant asks both the bride and groom "Do you take this person?" individually. Only after both say "I do" does the officiant pronounce them married. If either says "no," the ceremony is aborted. Once the officiant makes the pronouncement, the marriage is final—no take-backs!
+
+**In technical terms:** Two-phase commit is a classic algorithm for achieving atomic transaction commit across multiple nodes. Instead of a single commit request, the commit/abort process is split into two phases.
+
+**Used by:**
+- Internal to some databases
+- XA transactions (Java Transaction API)
+- WS-AtomicTransaction (SOAP web services)
+
+<DiagramContainer title="TWO-PHASE COMMIT FLOW">
+  <ProcessFlow steps={[
+    {
+      title: "Phase 0: Application Writes",
+      description: "Application reads/writes data on multiple nodes (participants)",
+      color: colors.blue
+    },
+    {
+      title: "Phase 1: Prepare",
+      description: "Coordinator asks each participant: 'Are you ready to commit?'",
+      color: colors.purple
+    },
+    {
+      title: "Participants Vote",
+      description: "Each replies 'yes' (ready) or 'no' (abort)",
+      color: colors.orange
+    },
+    {
+      title: "Phase 2: Commit or Abort",
+      description: "If all voted 'yes': coordinator sends commit. If any voted 'no': coordinator sends abort.",
+      color: colors.green
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Key component: The Coordinator** (also called transaction manager)
+
+- Often implemented as a library within application process
+- Can be separate process or service
+- Examples: Narayana, JOTM, BTM, MSDTC
+
+#### 5.2.1. A system of promises
+
+**Why does 2PC work when simple commit doesn't?**
+
+To understand, let's break down the process in detail:
+
+<DiagramContainer title="DETAILED 2PC PROTOCOL">
+  <ProcessFlow steps={[
+    {
+      title: "1. Request Transaction ID",
+      description: "Application requests globally unique transaction ID from coordinator",
+      color: colors.blue
+    },
+    {
+      title: "2. Begin on Each Participant",
+      description: "App begins single-node transaction on each participant, attaching global txn ID",
+      color: colors.blue
+    },
+    {
+      title: "3. Reads and Writes",
+      description: "All reads/writes done in single-node transactions. If anything fails, coordinator or participant can abort.",
+      color: colors.blue
+    },
+    {
+      title: "4. Coordinator Sends Prepare",
+      description: "When app ready to commit, coordinator sends prepare to all participants",
+      color: colors.purple
+    },
+    {
+      title: "5. Participants Make Promise",
+      description: "Each participant ensures it CAN commit (write to disk, check constraints, no conflicts)",
+      color: colors.orange,
+      icon: "🤝"
+    },
+    {
+      title: "6. Participants Vote",
+      description: "Reply 'yes' = promise to commit. Reply 'no' = will abort. By saying 'yes', participant surrenders right to abort!",
+      color: colors.orange,
+      icon: "✋"
+    },
+    {
+      title: "7. Coordinator Decides",
+      description: "Write decision to transaction log on disk (commit point!)",
+      color: colors.green,
+      icon: "⚖️"
+    },
+    {
+      title: "8. Coordinator Sends Decision",
+      description: "Send commit/abort to all participants. If this fails, retry FOREVER.",
+      color: colors.green,
+      icon: "♾️"
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Two crucial "points of no return":**
+
+<DiagramContainer title="2PC PROMISES">
+  <CardGrid cards={[
+    {
+      title: "Participant's Promise",
+      icon: "🤝",
+      color: colors.orange,
+      description: "When voting 'yes'",
+      items: [
+        "Promises it will definitely commit if asked",
+        "Surrenders right to abort",
+        "Must keep promise even after crash/recovery",
+        "Coordinator may still abort"
+      ]
+    },
+    {
+      title: "Coordinator's Decision",
+      icon: "⚖️",
+      color: colors.green,
+      description: "Once decision written to log",
+      items: [
+        "Decision is irrevocable",
+        "Must be enforced no matter what",
+        "Even if requires infinite retries",
+        "No going back"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**Marriage analogy:**
+
+- **Before "I do"**: Both parties can abort ("No way!")
+- **After "I do"**: Cannot retract, even if you faint
+- **Recovering from fainting**: Ask officiant for status of your transaction ("Am I married?")
+- **Officiant's retries**: Continue pronouncing you married until you acknowledge
+
+> **💡 Insight**
+>
+> The key insight: 2PC separates the "I promise I can commit" moment (prepare phase) from the "actually commit now" moment (commit phase). This separation, combined with durable logging of the coordinator's decision, makes atomic commitment across nodes possible.
+
+#### 5.2.2. Coordinator failure
+
+**What happens if participants or network fail?**
+
+- Prepare request fails/times out → Coordinator aborts
+- Commit/abort request fails → Coordinator retries indefinitely
+
+**But what if the coordinator crashes?**
+
+<DiagramContainer title="COORDINATOR FAILURE SCENARIOS">
+  <ProcessFlow steps={[
+    {
+      title: "Before Sending Prepare",
+      description: "Participant can safely abort (hasn't promised anything)",
+      color: colors.green
+    },
+    {
+      title: "After Participant Votes 'Yes'",
+      description: "Participant is IN DOUBT—cannot commit or abort unilaterally",
+      color: colors.red,
+      icon: "❓"
+    }
+  ]} />
+</DiagramContainer>
+
+**The in-doubt (uncertain) state:**
+
+<DiagramContainer title="IN-DOUBT PARTICIPANT PROBLEM">
+  <Column>
+    <Box color={colors.blue} variant="subtle">Scenario: Coordinator decides to commit, crashes before telling all participants</Box>
+    <Arrow direction="down" />
+    <Row>
+      <Group title="Database 2" color={colors.green}>
+        <Box color={colors.green}>Received commit</Box>
+        <Box color={colors.green}>Transaction committed</Box>
+      </Group>
+      <Group title="Database 1" color={colors.red}>
+        <Box color={colors.red}>Didn't receive commit</Box>
+        <Box color={colors.red}>Coordinator crashed</Box>
+        <Box color={colors.red}>What should I do?</Box>
+      </Group>
+    </Row>
+    <Arrow direction="down" />
+    <Box color={colors.orange}>Database 1 cannot decide!</Box>
+    <Box color={colors.red}>• Can't commit: other participant may have aborted</Box>
+    <Box color={colors.red}>• Can't abort: DB 2 has committed (would be inconsistent)</Box>
+    <Box color={colors.red}>• Timeout doesn't help: still don't know what happened</Box>
+  </Column>
+</DiagramContainer>
+
+**The only solution:** Wait for coordinator to recover.
+
+**Coordinator recovery process:**
+
+1. Coordinator must write commit/abort decision to log **before** sending to participants
+2. When coordinator recovers, reads transaction log
+3. Determines status of all in-doubt transactions from log
+4. Transactions without commit record in log → abort
+5. Transactions with commit record → send commit to participants
+
+**Why 2PC is called a "blocking" protocol:** Can become stuck waiting for coordinator to recover.
+
+> **💡 Insight**
+>
+> The in-doubt state is 2PC's Achilles' heel. Participants hold locks and resources while waiting for the coordinator. If the coordinator takes 20 minutes to recover, those locks are held for 20 minutes, blocking other transactions and potentially making large parts of your application unavailable.
+
+#### 5.2.3. Three-phase commit
+
+**Alternative to 2PC:** Three-phase commit (3PC) is a nonblocking atomic commit protocol.
+
+**However:** 3PC assumes:
+- Network with bounded delay
+- Nodes with bounded response times
+
+**In practice:** Most real systems have:
+- Unbounded network delay
+- Process pauses (see Chapter 9)
+
+**Result:** 3PC cannot guarantee atomicity in practical systems.
+
+**Better solution:** Replace single-node coordinator with a fault-tolerant consensus protocol (see Chapter 10).
+
+### 5.3. XA Transactions
+
+**In plain English:** XA is a standard that allows completely different technologies (Oracle database, IBM message queue, PostgreSQL, etc.) to participate in the same two-phase commit transaction. It defines a common language for coordinators and participants to communicate, even if they're built by different vendors.
+
+**In technical terms:** X/Open XA (eXtended Architecture) is a standard for implementing two-phase commit across heterogeneous technologies. Introduced in 1991, widely implemented by traditional relational databases and message brokers.
+
+#### 5.3.1. Distributed transactions across different systems
+
+Two types of distributed transactions (often conflated):
+
+<DiagramContainer title="TYPES OF DISTRIBUTED TRANSACTIONS">
+  <ComparisonTable
+    beforeTitle="Database-Internal"
+    afterTitle="Heterogeneous (XA)"
+    beforeColor={colors.green}
+    afterColor={colors.orange}
+    items={[
+      {
+        label: "Participants",
+        before: "All nodes run same database software",
+        after: "Two or more different technologies"
+      },
+      {
+        label: "Protocol",
+        before: "Can use any protocol, apply optimizations",
+        after: "Must use standard XA protocol"
+      },
+      {
+        label: "Performance",
+        before: "Can work quite well",
+        after: "More challenging"
+      },
+      {
+        label: "Examples",
+        before: "YugabyteDB, TiDB, FoundationDB, Spanner, VoltDB",
+        after: "PostgreSQL + ActiveMQ, Oracle + IBM MQ"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Heterogeneous transaction example:**
+
+<DiagramContainer title="HETEROGENEOUS TRANSACTION USE CASE">
+  <ProcessFlow steps={[
+    {
+      title: "Message Arrives",
+      description: "Message queue delivers message to application",
+      color: colors.blue
+    },
+    {
+      title: "Process Message",
+      description: "Application processes message, writes to database",
+      color: colors.purple
+    },
+    {
+      title: "Atomic Commit",
+      description: "Database write AND message acknowledgment in single transaction",
+      color: colors.green
+    },
+    {
+      title: "Result",
+      description: "Either both happen or neither happens (exactly-once semantics)",
+      color: colors.green
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Exactly-once message processing:**
+
+- If message delivery OR database write fails → both aborted
+- Message broker can safely redeliver later
+- By atomically committing message acknowledgment + database writes, message is processed exactly once
+- Partial completion is rolled back
+
+**Limitation:** Only possible if all systems support same atomic commit protocol (e.g., XA).
+
+**Example problem without XA:** If email server doesn't support 2PC, sending email can't be part of atomic transaction. Email might be sent twice if processing fails and is retried.
+
+#### 5.3.2. XA transactions
+
+**What is XA?**
+
+- **Not a network protocol**—it's a C API for interfacing with transaction coordinator
+- Bindings exist for other languages (Java Transaction API/JTA in Java EE)
+
+**Supported by:**
+
+<DiagramContainer title="XA SUPPORT">
+  <Row>
+    <Group title="Databases" color={colors.blue}>
+      <Box color={colors.blue}>PostgreSQL</Box>
+      <Box color={colors.blue}>MySQL</Box>
+      <Box color={colors.blue}>Db2</Box>
+      <Box color={colors.blue}>SQL Server</Box>
+      <Box color={colors.blue}>Oracle</Box>
+    </Group>
+    <Group title="Message Brokers" color={colors.purple}>
+      <Box color={colors.purple}>ActiveMQ</Box>
+      <Box color={colors.purple}>HornetQ</Box>
+      <Box color={colors.purple}>MSMQ</Box>
+      <Box color={colors.purple}>IBM MQ</Box>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+**How it works:**
+
+<DiagramContainer title="XA ARCHITECTURE">
+  <Column>
+    <Box color={colors.blue}>Application uses network driver/client library</Box>
+    <Arrow direction="down" />
+    <Box color={colors.purple}>Driver supports XA → calls XA API</Box>
+    <Arrow direction="down" />
+    <Box color={colors.orange}>Driver sends necessary info to database/message broker</Box>
+    <Arrow direction="down" />
+    <Box color={colors.green}>Driver exposes callbacks for coordinator (prepare, commit, abort)</Box>
+  </Column>
+</DiagramContainer>
+
+**Transaction coordinator implementation:**
+
+- Often a library loaded into same process as application
+- Not a separate service
+- Keeps track of participants
+- Collects responses after prepare
+- Uses log on local disk to track commit/abort decisions
+
+**If application crashes:**
+
+1. Coordinator goes with it (same process)
+2. Participants stuck in doubt
+3. Must restart application server
+4. Coordinator reads log to recover decisions
+5. Uses driver callbacks to tell participants to commit/abort
+
+**Important limitation:** Database cannot contact coordinator directly—all communication via client library.
+
+#### 5.3.3. Holding locks while in doubt
+
+**In plain English:** When a participant is in doubt, it's like a person standing in a doorway—they're blocking the way but don't know whether to go forward (commit) or backward (abort). Meanwhile, everyone else who needs to use that doorway (access that data) has to wait.
+
+**In technical terms:** Why is being stuck in doubt such a problem?
+
+**Lock requirements:**
+
+- Transactions take row-level exclusive locks on modified rows (prevent dirty writes)
+- With serializable isolation, also take shared locks on read rows
+- **Cannot release locks until commit or abort**
+
+<DiagramContainer title="LOCKS HELD WHILE IN DOUBT">
+  <ProcessFlow steps={[
+    {
+      title: "Normal Transaction",
+      description: "Acquire locks → Do work → Commit/Abort → Release locks (seconds)",
+      color: colors.green
+    },
+    {
+      title: "In-Doubt Transaction",
+      description: "Acquire locks → Vote 'yes' → Coordinator crashes → Hold locks forever",
+      color: colors.red
+    },
+    {
+      title: "Impact",
+      description: "Other transactions blocked from reading or writing those rows",
+      color: colors.orange
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Example scenario:**
+
+- 2PC transaction modifies rows, votes "yes"
+- Coordinator crashes, takes 20 minutes to restart
+- **Locks held for 20 minutes**
+- Other transactions wanting to access those rows: **blocked for 20 minutes**
+- Depending on isolation level: may block even read-only queries
+
+**Result:** Large parts of application become unavailable.
+
+> **💡 Insight**
+>
+> This is why 2PC has such a bad reputation in practice. In theory it provides atomicity; in practice, coordinator failures can cause prolonged outages. Unlike other failure modes that affect only the failed component, 2PC coordinator failures can bring down large parts of your entire application.
+
+#### 5.3.4. Recovering from coordinator failure
+
+**In theory:** Coordinator should cleanly recover from its log and resolve in-doubt transactions.
+
+**In practice:** Orphaned in-doubt transactions occur—coordinator cannot decide outcome because:
+- Transaction log lost or corrupted
+- Software bug
+- Other issues
+
+**These transactions:**
+
+- Cannot be resolved automatically
+- Sit forever in database
+- Hold locks indefinitely
+- Block other transactions perpetually
+
+**Rebooting doesn't fix it:** 2PC must preserve locks of in-doubt transactions even across restarts (otherwise violates atomicity guarantee).
+
+**The only solution: Manual intervention**
+
+Administrator must:
+1. Examine participants of each in-doubt transaction
+2. Determine if any participant has committed or aborted
+3. Manually apply same outcome to other participants
+
+**Challenges:**
+
+- Requires manual effort
+- Done under stress during production outage
+- High time pressure
+- Complex and error-prone
+
+**Emergency escape hatch: Heuristic decisions**
+
+- Participants can unilaterally decide to commit or abort
+- Without coordinator's definitive decision
+- **"Heuristic" = euphemism for "probably breaking atomicity"**
+- Violates 2PC's system of promises
+- Intended only for catastrophic situations, not regular use
+
+> **💡 Insight**
+>
+> The combination of holding locks during in-doubt periods and potential for manual recovery makes XA transactions operationally risky. Many cloud services choose not to implement distributed transactions specifically to avoid these operational problems.
+
+#### 5.3.5. Problems with XA transactions
+
+<DiagramContainer title="FUNDAMENTAL XA PROBLEMS">
+  <CardGrid cards={[
+    {
+      title: "Coordinator Single Point of Failure",
+      icon: "❌",
+      color: colors.red,
+      description: "For the entire system",
+      items: [
+        "Part of application server",
+        "Coordinator logs are crucial",
+        "As important as databases themselves",
+        "Hard to make highly available"
+      ]
+    },
+    {
+      title: "No Direct Communication",
+      icon: "🚫",
+      color: colors.orange,
+      description: "Fundamental protocol limitation",
+      items: [
+        "Coordinator and participants can't talk directly",
+        "Must communicate via application code",
+        "Application becomes single point of failure",
+        "Even if coordinator is replicated"
+      ]
+    },
+    {
+      title: "Lowest Common Denominator",
+      icon: "⬇️",
+      color: colors.purple,
+      description: "Must work with wide range of systems",
+      items: [
+        "Can't detect deadlocks across systems",
+        "Doesn't work with SSI",
+        "No advanced features",
+        "Limited to what all systems support"
+      ]
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+**The application code problem:**
+
+Even if coordinator were highly available and replicated, application code would still be a single point of failure. Solving this would require totally redesigning how application code runs (similar to durable execution), but no practical tools take this approach.
+
+**Limitations across heterogeneous systems:**
+
+- **Deadlock detection**: Would require standardized protocol for exchanging lock information
+- **SSI**: Would require protocol for identifying conflicts across systems
+- Both would need to be standardized and implemented by all participants
+
+> **💡 Insight**
+>
+> These problems are somewhat inherent in performing transactions across heterogeneous technologies. However, keeping heterogeneous systems consistent is still a real problem. The solution isn't XA—we need different approaches (covered in next section and Chapter 12).
+
+### 5.4. Database-Internal Distributed Transactions
+
+**In plain English:** When a database is designed from the ground up to be distributed (like modern "NewSQL" databases), it can use much better protocols for distributed transactions than XA. Because all the nodes run the same software and can talk directly to each other, they can use optimized protocols and avoid XA's problems.
+
+**In technical terms:** Database-internal distributed transactions are those where all participating nodes are shards of the same database running the same software. These avoid XA's limitations because they don't need to interface with other technologies.
+
+**Examples:** CockroachDB, TiDB, Spanner, FoundationDB, YugabyteDB, Kafka
+
+**Key difference:** Many use 2PC internally but don't suffer XA problems because they can optimize the protocol.
+
+<DiagramContainer title="DATABASE-INTERNAL VS XA TRANSACTIONS">
+  <ComparisonTable
+    beforeTitle="XA (Heterogeneous)"
+    afterTitle="Database-Internal"
+    beforeColor={colors.red}
+    afterColor={colors.green}
+    items={[
+      {
+        label: "Coordinator",
+        before: "Single-node, part of application",
+        after: "Replicated with automatic failover"
+      },
+      {
+        label: "Communication",
+        before: "Via application code only",
+        after: "Direct communication between nodes"
+      },
+      {
+        label: "Participant replication",
+        before: "Up to individual systems",
+        after: "All shards replicated"
+      },
+      {
+        label: "Concurrency control",
+        before: "Limited to lowest common denominator",
+        after: "Integrated deadlock detection, SSI support"
+      },
+      {
+        label: "Performance",
+        before: "Poor",
+        after: "Good"
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**How database-internal distributed transactions fix XA problems:**
+
+<DiagramContainer title="IMPROVEMENTS OVER XA">
+  <CardGrid cards={[
+    {
+      title: "Replicated Coordinator",
+      icon: "🔄",
+      color: colors.green,
+      description: "Automatic failover",
+      items: [
+        "Coordinator replicated using consensus",
+        "Fails over automatically if primary crashes",
+        "No manual intervention needed",
+        "No prolonged unavailability"
+      ]
+    },
+    {
+      title: "Direct Communication",
+      icon: "↔️",
+      color: colors.blue,
+      description: "Between coordinator and shards",
+      items: [
+        "Don't need to route via application",
+        "Application not single point of failure",
+        "More reliable communication",
+        "Better performance"
+      ]
+    },
+    {
+      title: "Replicated Shards",
+      icon: "📦",
+      color: colors.purple,
+      description: "Fault tolerance",
+      items: [
+        "Each shard is replicated",
+        "Reduces risk of abort due to faults",
+        "Better availability",
+        "Faster recovery"
+      ]
+    },
+    {
+      title: "Integrated Protocols",
+      icon: "🔗",
+      color: colors.orange,
+      description: "Advanced features",
+      items: [
+        "Deadlock detection across shards",
+        "Snapshot isolation across shards",
+        "SSI support",
+        "Optimized for single system"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+**Consensus algorithms:** Commonly used to replicate coordinator and database shards. We'll see in Chapter 10 how to implement atomic commitment using consensus (Chapter 10).
+
+**Isolation levels:** Snapshot isolation and SSI are both possible across shards.
+
+> **💡 Insight**
+>
+> The key lesson: Distributed transactions aren't inherently bad—XA transactions are bad. When the entire distributed database is designed as a cohesive system, distributed transactions can work well. This is a major achievement of NewSQL databases.
+
+#### 5.4.1. Exactly-once message processing revisited
+
+**Recall:** An important use case for distributed transactions is ensuring operations take effect exactly once, even if crashes occur and processing needs retry.
+
+**With distributed transactions:** Atomically commit across message broker and database—acknowledge message if and only if database writes succeeded.
+
+**Alternative approach (without distributed transactions):**
+
+Only requires transactions **within** the database:
+
+<DiagramContainer title="EXACTLY-ONCE WITHOUT DISTRIBUTED TRANSACTIONS">
+  <ProcessFlow steps={[
+    {
+      title: "1. Check Message ID",
+      description: "Begin DB transaction, check if message ID already in processed table",
+      color: colors.blue
+    },
+    {
+      title: "2. If Already Processed",
+      description: "Drop message, acknowledge to broker (idempotent retry)",
+      color: colors.green
+    },
+    {
+      title: "3. If Not Processed",
+      description: "Add message ID to table, process message, commit DB transaction",
+      color: colors.purple
+    },
+    {
+      title: "4. Acknowledge to Broker",
+      description: "After successful DB commit, acknowledge message",
+      color: colors.orange
+    },
+    {
+      title: "5. Cleanup (Optional)",
+      description: "Delete message ID from table (separate transaction)",
+      color: colors.cyan
+    }
+  ]} direction="vertical" />
+</DiagramContainer>
+
+**Crash scenarios:**
+
+| Crash Point | What Happens | Result |
+|-------------|--------------|--------|
+| **Before DB commit** | Transaction aborted, broker retries | Message reprocessed, ID check prevents duplicate |
+| **After DB commit, before ACK** | Broker retries | Message ID in DB, dropped as duplicate |
+| **After ACK, before cleanup** | Old message ID remains | Harmless (just takes storage space) |
+| **Network interruption** | If before commit aborted | Uniqueness constraint prevents concurrent inserts |
+
+**Key insight:** Recording the message ID in the database makes processing **idempotent**—can safely retry without duplicating side effects.
+
+**Similar approach:** Used by Kafka Streams for exactly-once semantics (Chapter 12).
+
+**Internal distributed transactions still useful:** Allow message IDs on one shard, main data on other shards, with atomicity across shards.
+
+> **💡 Insight**
+>
+> You don't always need distributed transactions across different systems to achieve exactly-once semantics. With idempotent operations and message IDs, you can achieve the same guarantee with only single-system transactions. However, distributed transactions within a database (across shards) are still valuable for scalability.
+
+---
+
+## 6. Summary
+
+**In plain English:** Transactions are a lifesaver for application developers. Instead of manually handling crashes, network failures, concurrent users, and countless edge cases, transactions let you pretend these problems don't exist. If something goes wrong, just retry. This simplifies programming enormously.
+
+**In technical terms:** Transactions are an abstraction layer that allows applications to pretend certain concurrency problems and hardware/software faults don't exist. A large class of errors reduces down to simple transaction abort, requiring only retry logic.
+
+**What we covered:**
+
+<DiagramContainer title="TRANSACTION CONCEPTS COVERED">
+  <CardGrid cards={[
+    {
+      title: "ACID Meaning",
+      icon: "📖",
+      color: colors.blue,
+      description: "What the letters really mean",
+      items: [
+        "Atomicity = abortability",
+        "Consistency = application invariants",
+        "Isolation = concurrency control",
+        "Durability = no data loss"
+      ]
+    },
+    {
+      title: "Weak Isolation Levels",
+      icon: "⚠️",
+      color: colors.orange,
+      description: "Common but dangerous",
+      items: [
+        "Read committed",
+        "Snapshot isolation",
+        "Still allow many race conditions",
+        "Naming confusion across databases"
+      ]
+    },
+    {
+      title: "Race Conditions",
+      icon: "🏁",
+      color: colors.red,
+      description: "Problems with weak isolation",
+      items: [
+        "Dirty reads/writes",
+        "Read skew",
+        "Lost updates",
+        "Write skew and phantoms"
+      ]
+    },
+    {
+      title: "Serializability",
+      icon: "✅",
+      color: colors.green,
+      description: "Strongest isolation",
+      items: [
+        "Serial execution",
+        "Two-phase locking (2PL)",
+        "Serializable snapshot isolation (SSI)",
+        "Prevents all race conditions"
+      ]
+    }
+  ]} columns={2} />
+</DiagramContainer>
+
+### Isolation Levels Summary
+
+We discussed several widely-used isolation levels and characterized them by race conditions they allow or prevent:
+
+<DiagramContainer title="ISOLATION LEVELS AND ANOMALIES">
+  <div style={{overflowX: 'auto'}}>
+    <table style={{width: '100%', borderCollapse: 'collapse', marginTop: '1rem'}}>
+      <thead>
+        <tr style={{backgroundColor: colors.blue + '20', borderBottom: '2px solid ' + colors.blue}}>
+          <th style={{padding: '0.75rem', textAlign: 'left', fontWeight: 'bold'}}>Isolation Level</th>
+          <th style={{padding: '0.75rem', textAlign: 'center'}}>Dirty Reads</th>
+          <th style={{padding: '0.75rem', textAlign: 'center'}}>Read Skew</th>
+          <th style={{padding: '0.75rem', textAlign: 'center'}}>Phantom Reads</th>
+          <th style={{padding: '0.75rem', textAlign: 'center'}}>Lost Updates</th>
+          <th style={{padding: '0.75rem', textAlign: 'center'}}>Write Skew</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+          <td style={{padding: '0.75rem', fontWeight: '500'}}>Read Uncommitted</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+        </tr>
+        <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+          <td style={{padding: '0.75rem', fontWeight: '500'}}>Read Committed</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+        </tr>
+        <tr style={{borderBottom: '1px solid #e5e7eb'}}>
+          <td style={{padding: '0.75rem', fontWeight: '500'}}>Snapshot Isolation</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.orange}}>? Depends</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.red}}>✗ Possible</td>
+        </tr>
+        <tr>
+          <td style={{padding: '0.75rem', fontWeight: '500'}}>Serializable</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+          <td style={{padding: '0.75rem', textAlign: 'center', color: colors.green}}>✓ Prevented</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</DiagramContainer>
+
+**Anomaly definitions:**
+
+- **Dirty reads**: Reading another client's uncommitted writes
+- **Dirty writes**: Overwriting data another client wrote but hasn't committed
+- **Read skew**: Seeing different parts of database at different points in time (nonrepeatable reads)
+- **Lost updates**: Two concurrent read-modify-write cycles; one overwrites other's write
+- **Write skew**: Transaction reads data, makes decision, writes—but premise no longer true at commit time
+- **Phantom reads**: Transaction reads objects matching search; another transaction's write affects search results
+
+### Serializability Implementation Summary
+
+Only serializable isolation protects against all anomalies. We discussed three approaches:
+
+<DiagramContainer title="IMPLEMENTING SERIALIZABILITY">
+  <CardGrid cards={[
+    {
+      title: "Serial Execution",
+      icon: "➡️",
+      color: colors.blue,
+      description: "One transaction at a time",
+      items: [
+        "Use stored procedures",
+        "Fast if transactions short",
+        "Limited to single CPU core",
+        "Can shard if cross-shard rare"
+      ]
+    },
+    {
+      title: "Two-Phase Locking (2PL)",
+      icon: "🔒",
+      color: colors.orange,
+      description: "Decades-old standard",
+      items: [
+        "Readers block writers, vice versa",
+        "Poor performance",
+        "Avoided by many applications",
+        "Unstable latencies"
+      ]
+    },
+    {
+      title: "Serializable Snapshot Isolation (SSI)",
+      icon: "✨",
+      color: colors.green,
+      description: "Modern optimistic approach",
+      items: [
+        "Detect conflicts, abort instead of blocking",
+        "Avoids most downsides of previous approaches",
+        "Good performance",
+        "Fairly new (2008)"
+      ]
+    }
+  ]} columns={3} />
+</DiagramContainer>
+
+### Distributed Transactions Summary
+
+We examined achieving atomicity when transactions span multiple nodes:
+
+**Two-phase commit (2PC):**
+- Coordinator + participants
+- Prepare phase (voting)
+- Commit/abort phase (decision)
+
+**Database-internal distributed transactions** (same database software on all nodes): Can work quite well using 2PC with optimizations.
+
+**XA transactions** (across different storage technologies):
+- Very sensitive to coordinator and application code faults
+- Interacts poorly with concurrency control
+- **Alternative:** Idempotence can achieve exactly-once semantics without atomic commit across different systems
+
+> **💡 Insight**
+>
+> Transactions are a valuable feature regardless of data model. While not every application needs transactions, they hugely reduce the number of error cases you need to think about. Without transactions, complex interacting accesses become very difficult to reason about, and data can easily become inconsistent.
+
+**Looking ahead:** The examples in this chapter used relational data models, but as discussed in "The need for multi-object transactions," transactions are valuable for any data model.
+
+---
+
+**Previous:** [Chapter 7](../part2/chapter07-sharding.mdx) | **Next:** [Chapter 9](chapter09-distributed-systems.mdx)

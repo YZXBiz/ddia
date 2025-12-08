@@ -1,0 +1,1056 @@
+---
+sidebar_position: 2
+title: "Chapter 2: Defining Nonfunctional Requirements"
+description: "Understanding performance, reliability, scalability, and maintainability in data systems"
+---
+
+import { Box, Arrow, Row, Column, Group, DiagramContainer, ProcessFlow, TreeDiagram, StackDiagram, CardGrid, ConnectionDiagram, ComparisonTable, StateFlow, colors } from '@site/src/components/diagrams';
+
+# Chapter 2. Defining Nonfunctional Requirements
+
+_The invisible requirements that make or break your system_
+
+> **"The Internet was done so well that most people think of it as a natural resource like the Pacific Ocean, rather than something that was man-made. When was the last time a technology with a scale like that was so error-free?"**
+>
+> — Alan Kay, in interview with Dr Dobb's Journal (2012)
+
+---
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [Case Study: Social Network Home Timelines](#2-case-study-social-network-home-timelines)
+   - 2.1. [Representing Users, Posts, and Follows](#21-representing-users-posts-and-follows)
+   - 2.2. [Materializing and Updating Timelines](#22-materializing-and-updating-timelines)
+3. [Describing Performance](#3-describing-performance)
+   - 3.1. [Latency and Response Time](#31-latency-and-response-time)
+   - 3.2. [Average, Median, and Percentiles](#32-average-median-and-percentiles)
+   - 3.3. [Use of Response Time Metrics](#33-use-of-response-time-metrics)
+4. [Reliability and Fault Tolerance](#4-reliability-and-fault-tolerance)
+   - 4.1. [Fault Tolerance](#41-fault-tolerance)
+   - 4.2. [Hardware and Software Faults](#42-hardware-and-software-faults)
+   - 4.3. [Humans and Reliability](#43-humans-and-reliability)
+   - 4.4. [How Important Is Reliability?](#44-how-important-is-reliability)
+5. [Scalability](#5-scalability)
+   - 5.1. [Describing Load](#51-describing-load)
+   - 5.2. [Shared-Memory, Shared-Disk, and Shared-Nothing Architecture](#52-shared-memory-shared-disk-and-shared-nothing-architecture)
+   - 5.3. [Principles for Scalability](#53-principles-for-scalability)
+6. [Maintainability](#6-maintainability)
+   - 6.1. [Operability: Making Life Easy for Operations](#61-operability-making-life-easy-for-operations)
+   - 6.2. [Simplicity: Managing Complexity](#62-simplicity-managing-complexity)
+   - 6.3. [Evolvability: Making Change Easy](#63-evolvability-making-change-easy)
+7. [Summary](#7-summary)
+
+---
+
+## 1. Introduction
+
+**In plain English:** You wouldn't build a house focusing only on the floor plan while ignoring whether it can withstand storms, stay warm in winter, or be maintained. Similarly, software needs more than just functionality—it must be fast, reliable, and maintainable.
+
+**In technical terms:** Nonfunctional requirements define system qualities like performance, reliability, scalability, and maintainability. Unlike functional requirements (what the system does), nonfunctional requirements describe how well it does it.
+
+**Why it matters:** An app that works perfectly in theory but crashes constantly, responds slowly, or becomes unmaintainable is worthless. These "invisible" requirements often determine whether a system succeeds or fails in production.
+
+<CardGrid
+  cards={[
+    { title: "Performance", description: "How fast does it respond?", icon: "⚡", color: colors.blue },
+    { title: "Reliability", description: "Does it keep working when things fail?", icon: "🛡️", color: colors.green },
+    { title: "Scalability", description: "Can it handle growth?", icon: "📈", color: colors.purple },
+    { title: "Maintainability", description: "Can we evolve it over time?", icon: "🔧", color: colors.orange }
+  ]}
+  columns={2}
+/>
+
+> **💡 Insight**
+>
+> Nonfunctional requirements are often unstated because they seem "obvious," but they're just as critical as features. A slow, unreliable app might as well not exist—users will abandon it regardless of its features.
+
+---
+
+## 2. Case Study: Social Network Home Timelines
+
+**In plain English:** Imagine building a Twitter-like feed where millions of people post and read updates every second. Should you build the feed when someone opens the app, or prepare it ahead of time? This simple question reveals fundamental trade-offs in system design.
+
+**In technical terms:** Social network timelines demonstrate the classic read vs. write optimization trade-off. Computing timelines on-demand optimizes writes but slows reads. Precomputing timelines optimizes reads but increases write complexity.
+
+**Why it matters:** This pattern—choosing when to do work—appears everywhere in data systems. Understanding it helps you make similar decisions across different domains.
+
+<DiagramContainer title="Social Network Scale">
+  <Row gap="md">
+    <Box color={colors.blue} icon="✍️">500M posts/day<br/>(5,700/sec avg)</Box>
+    <Box color={colors.purple} icon="📈">150k posts/sec<br/>(peak load)</Box>
+    <Box color={colors.green} icon="👥">200 follows/user<br/>(average)</Box>
+  </Row>
+</DiagramContainer>
+
+### 2.1. Representing Users, Posts, and Follows
+
+**In plain English:** You could store everything in a database and build each person's feed by searching for their friends' posts every time they open the app. Simple, but slow.
+
+**In technical terms:** A relational schema with users, posts, and follows tables supports on-demand timeline generation via joins. This approach computes timelines at read time.
+
+Let's say the main read operation is the **home timeline**, displaying recent posts by people you follow. The SQL query:
+
+```sql
+SELECT posts.*, users.* FROM posts
+  JOIN follows ON posts.sender_id = follows.followee_id
+  JOIN users   ON posts.sender_id = users.id
+  WHERE follows.follower_id = current_user
+  ORDER BY posts.timestamp DESC
+  LIMIT 1000
+```
+
+**The problem with polling:**
+- 10 million online users
+- Polling every 5 seconds
+- = 2 million queries/second
+- Each query fetches posts from ~200 followed users
+- = 400 million post lookups/second
+
+<DiagramContainer title="On-Demand Timeline Generation">
+  <ProcessFlow
+    steps={[
+      { title: "User Opens App", description: "Request home timeline", color: colors.blue },
+      { title: "Find Follows", description: "Query follows table", color: colors.purple },
+      { title: "Fetch Posts", description: "Get recent posts from each", color: colors.green },
+      { title: "Merge & Sort", description: "Combine and order by time", color: colors.orange }
+    ]}
+  />
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> The query is expensive because it fetches and merges posts from 200 users per request. At scale, this read-time computation becomes a bottleneck—400 million lookups/second is prohibitive for most databases.
+
+### 2.2. Materializing and Updating Timelines
+
+**In plain English:** Instead of searching for your friends' posts when you open the app, what if we prepared your feed ahead of time—like delivering mail to your mailbox instead of making you go to every friend's house to check for letters?
+
+**In technical terms:** Materialization precomputes query results and stores them. When a user posts, we fan out that post to all followers' timeline caches. This shifts work from read time to write time.
+
+<DiagramContainer title="Timeline Materialization: Query-Time vs Write-Time">
+  <StateFlow
+    states={[
+      {
+        id: 'query-time',
+        label: 'Query-Time (On-Demand)',
+        description: 'User opens app → JOIN query across follows → Fetch 200 users posts → Merge & sort',
+        metadata: '400M lookups/sec at scale',
+        color: colors.red
+      },
+      {
+        id: 'write-time',
+        label: 'Write-Time (Materialized)',
+        description: 'User posts → Find followers → Insert to each timeline cache → User reads from cache',
+        metadata: '1.14M writes/sec (much better!)',
+        color: colors.green
+      }
+    ]}
+    transitions={[]}
+  />
+</DiagramContainer>
+
+<DiagramContainer title="Fan-out Pattern: Write Amplification">
+  <Column gap="md">
+    <Box color={colors.blue}>User Makes 1 Post</Box>
+    <Arrow direction="down" label="Fan-out" />
+    <Row gap="sm">
+      <Box color={colors.purple} size="sm">Timeline 1</Box>
+      <Box color={colors.purple} size="sm">Timeline 2</Box>
+      <Box color={colors.purple} size="sm">Timeline 3</Box>
+      <Box color={colors.purple} size="sm">...</Box>
+      <Box color={colors.purple} size="sm">Timeline 200</Box>
+    </Row>
+    <div style={{textAlign: 'center', color: colors.slate, fontSize: '0.9rem', marginTop: '8px'}}>
+      1 write → 200 writes (fan-out factor = 200)
+    </div>
+  </Column>
+</DiagramContainer>
+
+**The fan-out calculation:**
+- 5,700 posts/second (average)
+- × 200 followers per post (fan-out factor)
+- = 1.14 million timeline writes/second
+
+**Trade-off analysis:**
+
+<ComparisonTable
+  items={[
+    { label: "Read Performance", before: "Slow (expensive joins)", after: "Fast (cache lookup)" },
+    { label: "Write Performance", before: "Fast (single insert)", after: "Slower (fan-out writes)" },
+    { label: "Write Volume", before: "5,700 writes/sec", after: "1.14M writes/sec" },
+    { label: "Read Volume", before: "400M lookups/sec", after: "Simple cache reads" }
+  ]}
+  beforeTitle="On-Demand"
+  afterTitle="Materialized"
+  beforeColor={colors.blue}
+  afterColor={colors.green}
+/>
+
+> **💡 Insight**
+>
+> Materialization is a **read-write trade-off**: precomputing views shifts work from read time to write time. This is beneficial when reads vastly outnumber writes—a common pattern in user-facing applications.
+
+**The celebrity problem:** Users with 100M followers create extreme fan-out. A single post triggers 100M timeline updates—impractical. Real implementations use hybrid approaches: materialize for normal users, compute on-demand for celebrities.
+
+---
+
+## 3. Describing Performance
+
+**In plain English:** "Fast" is subjective. Does it mean average speed, worst-case speed, or something else? To build reliable systems, we need precise ways to measure and discuss performance.
+
+**In technical terms:** Performance metrics fall into two categories: response time (latency from request to response) and throughput (requests or data volume per second). Both are critical but measure different aspects of system behavior.
+
+<DiagramContainer title="Performance Metrics">
+  <Row gap="lg">
+    <Group title="Response Time" color={colors.blue}>
+      <Box color={colors.blue}>User makes request</Box>
+      <Arrow direction="down" label="time elapsed" />
+      <Box color={colors.blue}>User receives answer</Box>
+    </Group>
+    <Group title="Throughput" color={colors.purple}>
+      <Box color={colors.purple}>Requests/second</Box>
+      <Box color={colors.purple}>Data volume/second</Box>
+      <Box color={colors.purple}>Operations/second</Box>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+| Metric | Description | Unit |
+|--------|-------------|------|
+| **Response time** | Elapsed time from request to answer | Seconds (ms, μs) |
+| **Throughput** | Number of requests or data volume per second | "per second" |
+
+**The relationship:** These metrics are interconnected. When throughput increases (more concurrent requests), response time often degrades due to **queueing**—requests waiting for resources like CPU or network.
+
+### 3.1. Latency and Response Time
+
+**In plain English:** Response time is what the user experiences—the total wait. Latency is the waiting time when nothing is actively happening (like waiting in line).
+
+**In technical terms:** Response time encompasses all delays; latency specifically measures idle waiting time when a request isn't being actively processed.
+
+| Term | Definition |
+|------|------------|
+| **Response time** | What the client sees; includes all delays anywhere in the system |
+| **Service time** | Duration the service is actively processing the request |
+| **Queueing delays** | Time waiting for resources (CPU, network, disk) |
+| **Latency** | Time during which a request is not being actively processed (latent, waiting) |
+
+<DiagramContainer title="Anatomy of Response Time">
+  <StackDiagram
+    layers={[
+      { label: "Network Latency (client → server)", color: colors.blue },
+      { label: "Queueing Delay (waiting for CPU)", color: colors.orange },
+      { label: "Service Time (active processing)", color: colors.green },
+      { label: "Queueing Delay (waiting for DB)", color: colors.orange },
+      { label: "Network Latency (server → client)", color: colors.blue }
+    ]}
+  />
+</DiagramContainer>
+
+**Variability:** Response time varies dramatically between identical requests due to:
+- Context switches (OS scheduling)
+- Network packet loss and TCP retransmission
+- Garbage collection pauses
+- Page faults (RAM → disk swapping)
+- Cache misses
+
+> **💡 Insight**
+>
+> **Head-of-line blocking** causes queueing delays to amplify variability. Since servers process limited concurrent requests, even a few slow requests block subsequent ones, creating cascading delays.
+
+### 3.2. Average, Median, and Percentiles
+
+**In plain English:** If nine requests take 100ms and one takes 10 seconds, the average is 1090ms—but that's misleading. Most users experienced 100ms, not 1090ms. We need better ways to describe distributions.
+
+**In technical terms:** Response time is a distribution, not a single number. Percentiles describe this distribution more accurately than averages.
+
+<DiagramContainer title="Performance Percentiles Visualization">
+  <Column gap="md">
+    <Row gap="sm">
+      <Box color={colors.green} size="md">p50: 100ms<br/>50% of users</Box>
+      <Arrow direction="right" label="slower →" />
+      <Box color={colors.blue} size="sm">p95: 200ms<br/>5% of users</Box>
+      <Arrow direction="right" />
+      <Box color={colors.yellow} size="sm">p99: 500ms<br/>1% of users</Box>
+      <Arrow direction="right" />
+      <Box color={colors.red} size="xs">p999: 2s<br/>0.1% of users</Box>
+    </Row>
+    <div style={{fontSize: '0.9rem', color: colors.slate, textAlign: 'center', marginTop: '8px'}}>
+      Box size represents percentage of users experiencing that latency or better
+    </div>
+  </Column>
+</DiagramContainer>
+
+<DiagramContainer title="Understanding Percentiles">
+  <CardGrid
+    cards={[
+      { title: "p50 (Median)", description: "Half faster, half slower than this value", icon: "📊", color: colors.blue },
+      { title: "p95", description: "95% of requests faster than this", icon: "📈", color: colors.purple },
+      { title: "p99", description: "99% of requests faster than this", icon: "🎯", color: colors.green },
+      { title: "p999", description: "99.9% of requests faster than this", icon: "⚡", color: colors.orange }
+    ]}
+    columns={2}
+  />
+</DiagramContainer>
+
+| Percentile | Meaning |
+|------------|---------|
+| **p50 (median)** | Half of requests are faster, half are slower |
+| **p95** | 95% of requests are faster than this threshold |
+| **p99** | 99% of requests are faster than this threshold |
+| **p999** | 99.9% of requests are faster than this threshold |
+
+**Why high percentiles matter:**
+
+1. **Valuable customers:** Users with slow requests often have the most data (e.g., power users, large accounts)
+2. **User experience:** Consistently slow experiences drive users away
+3. **Amazon example:** Uses p999 for internal services because slowest users are often most valuable
+
+> **💡 Insight**
+>
+> **Tail latencies** (high percentiles) directly impact user experience. A p99 of 2 seconds means 1 in 100 users waits 2+ seconds—enough to notice and complain. For high-traffic services, that's thousands of frustrated users daily.
+
+### 3.3. Use of Response Time Metrics
+
+**In plain English:** When one page load requires calling 10 backend services, even if each service is fast 99% of the time, there's a good chance at least one will be slow—making the whole page slow.
+
+**In technical terms:** Tail latency amplification occurs when a user request requires multiple backend calls. The probability of encountering at least one slow call increases with the number of calls.
+
+<DiagramContainer title="Tail Latency Amplification">
+  <Column gap="md">
+    <Box color={colors.blue}>User Request</Box>
+    <Arrow direction="down" />
+    <Row gap="sm">
+      <Box color={colors.purple} size="sm">Service A</Box>
+      <Box color={colors.purple} size="sm">Service B</Box>
+      <Box color={colors.purple} size="sm">Service C</Box>
+      <Box color={colors.purple} size="sm">Service D</Box>
+    </Row>
+    <Arrow direction="down" label="slowest call determines total time" />
+    <Box color={colors.orange}>Response to User</Box>
+  </Column>
+</DiagramContainer>
+
+**Example:** If each service has p99 = 100ms, and you call 10 services in parallel, the probability that all respond within 100ms is only 90%—meaning p99 for the overall request is likely much worse.
+
+**Service Level Objectives (SLOs) and Agreements (SLAs):**
+
+Percentiles define expected performance in contracts:
+- **SLO:** "p95 response time will be under 200ms"
+- **SLA:** "We guarantee p99 under 1 second, or you get a refund"
+
+> **💡 Insight**
+>
+> High-percentile guarantees become exponentially harder in distributed systems. Each additional service call compounds tail latency risk, which is why microservices often struggle with consistent performance.
+
+---
+
+## 4. Reliability and Fault Tolerance
+
+**In plain English:** Reliability means the system keeps working correctly even when things go wrong—hard drives fail, networks glitch, and humans make mistakes. A reliable system handles these gracefully instead of crashing.
+
+**In technical terms:** Reliability is the system's ability to continue providing required services despite faults. This requires fault tolerance mechanisms that prevent faults from escalating into failures.
+
+**Why it matters:** Hardware fails constantly at scale. In a datacenter with 10,000 hard drives, if each has a 1% annual failure rate, you'll have 100 drive failures per year—nearly 2 per week. Systems must be designed to handle this.
+
+For software, typical reliability expectations include:
+
+<CardGrid
+  cards={[
+    { title: "Correct Function", description: "Performs what users expect", icon: "✓", color: colors.blue },
+    { title: "Error Tolerance", description: "Handles mistakes gracefully", icon: "🛡️", color: colors.green },
+    { title: "Good Performance", description: "Fast enough for use case", icon: "⚡", color: colors.purple },
+    { title: "Security", description: "Prevents unauthorized access", icon: "🔒", color: colors.orange }
+  ]}
+  columns={2}
+/>
+
+**Key distinction:**
+
+| Term | Definition |
+|------|------------|
+| **Fault** | A component stops working correctly (e.g., disk fails, network drops) |
+| **Failure** | The system as a whole stops providing required service to users |
+
+<DiagramContainer title="Fault vs Failure">
+  <Row gap="lg">
+    <Column gap="sm">
+      <Box color={colors.orange} size="sm">Disk Fails</Box>
+      <Box color={colors.orange} size="sm">Network Drops</Box>
+      <Box color={colors.orange} size="sm">Process Crashes</Box>
+      <div style={{fontSize: '0.9rem', color: colors.slate}}>Faults (Component Issues)</div>
+    </Column>
+    <Arrow direction="right" label="prevented by" />
+    <Column gap="sm">
+      <Box color={colors.green} size="sm">Redundancy</Box>
+      <Box color={colors.green} size="sm">Retry Logic</Box>
+      <Box color={colors.green} size="sm">Monitoring</Box>
+      <div style={{fontSize: '0.9rem', color: colors.slate}}>Fault Tolerance</div>
+    </Column>
+    <Arrow direction="right" label="avoids" />
+    <Column gap="sm">
+      <Box color={colors.red} size="sm">Data Loss</Box>
+      <Box color={colors.red} size="sm">Downtime</Box>
+      <Box color={colors.red} size="sm">Corruption</Box>
+      <div style={{fontSize: '0.9rem', color: colors.slate}}>Failures (System Issues)</div>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> **Reliability = continuing to work correctly, even when things go wrong.** The goal isn't to eliminate all faults (impossible), but to prevent faults from becoming failures.
+
+### 4.1. Fault Tolerance
+
+**In plain English:** Fault tolerance means your system can lose a specific part and keep working. Like having a spare tire—you can drive even with a flat.
+
+**In technical terms:** A system is fault-tolerant if it continues providing required services despite certain faults occurring. Components that, if failed, cause system failure are called single points of failure (SPOFs).
+
+**Scope limits:** Fault tolerance is always bounded:
+- "Tolerates up to 2 concurrent disk failures"
+- "Survives single datacenter outage"
+- "Handles 3 node failures in a 5-node cluster"
+
+<DiagramContainer title="Single Point of Failure vs Fault Tolerance">
+  <Row gap="lg">
+    <Group title="SPOF Architecture" color={colors.red}>
+      <Column gap="sm">
+        <Box color={colors.blue} size="sm">Load Balancer</Box>
+        <Arrow direction="down" />
+        <Box color={colors.red}>Single Database</Box>
+        <div style={{fontSize: '0.85rem', color: colors.red}}>⚠️ If DB fails, system fails</div>
+      </Column>
+    </Group>
+    <Group title="Fault-Tolerant" color={colors.green}>
+      <Column gap="sm">
+        <Box color={colors.blue} size="sm">Load Balancer</Box>
+        <Arrow direction="down" />
+        <Row gap="sm">
+          <Box color={colors.green} size="sm">DB Primary</Box>
+          <Box color={colors.green} size="sm">DB Replica</Box>
+          <Box color={colors.green} size="sm">DB Replica</Box>
+        </Row>
+        <div style={{fontSize: '0.85rem', color: colors.green}}>✓ System survives DB failure</div>
+      </Column>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+**Chaos Engineering:** Deliberately injecting faults to test tolerance mechanisms:
+- Randomly kill processes
+- Introduce network delays
+- Fill up disks
+- Simulate datacenter outages
+
+<DiagramContainer title="Fault Tolerance: Defense in Depth">
+  <Column gap="sm">
+    <Box color={colors.blue}>Application Layer<br/><span style={{fontSize: '0.85rem'}}>Circuit breakers, graceful degradation, fallbacks</span></Box>
+    <Arrow direction="down" />
+    <Box color={colors.green}>Replication Layer<br/><span style={{fontSize: '0.85rem'}}>Data redundancy, automatic failover</span></Box>
+    <Arrow direction="down" />
+    <Box color={colors.yellow}>Network Layer<br/><span style={{fontSize: '0.85rem'}}>Retry logic, timeouts, load balancing</span></Box>
+    <Arrow direction="down" />
+    <Box color={colors.orange}>Infrastructure Layer<br/><span style={{fontSize: '0.85rem'}}>RAID arrays, dual power supplies, redundant nodes</span></Box>
+    <Arrow direction="down" />
+    <Box color={colors.purple}>Physical Layer<br/><span style={{fontSize: '0.85rem'}}>Multiple data centers, geographic distribution</span></Box>
+  </Column>
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> Counter-intuitively, **increasing fault rates** can improve reliability. By deliberately triggering faults (chaos engineering), you discover weaknesses before they cause real outages. Netflix's Chaos Monkey randomly terminates production instances to ensure systems handle failures gracefully.
+
+### 4.2. Hardware and Software Faults
+
+**In plain English:** Hardware breaks predictably—drives fail at known rates, you can plan for it. Software bugs are trickier because they often affect all instances simultaneously.
+
+**In technical terms:** Hardware faults are typically independent and random. Software faults are correlated—the same bug exists on every node running that code, causing simultaneous failures.
+
+**Hardware fault rates:**
+
+<DiagramContainer title="Hardware Failure Rates">
+  <CardGrid
+    cards={[
+      { title: "Hard Drives", description: "2–5% fail per year", icon: "💿", color: colors.blue },
+      { title: "SSDs", description: "0.5–1% fail per year", icon: "💾", color: colors.purple },
+      { title: "CPU Cores", description: "1 in 1,000 compute wrong results", icon: "⚙️", color: colors.green },
+      { title: "RAM", description: "Corrupted by cosmic rays", icon: "🌟", color: colors.orange }
+    ]}
+    columns={2}
+  />
+</DiagramContainer>
+
+**Traditional response:** Add redundancy:
+- RAID for disk failures
+- Dual power supplies
+- Backup generators
+- Hot-swappable components
+
+**Software faults** are more insidious:
+
+| Fault Type | Example | Impact |
+|------------|---------|--------|
+| **Cascading failures** | One overloaded service causes others to fail | Widespread outage |
+| **Resource exhaustion** | Memory leak consumes all RAM | All nodes fail simultaneously |
+| **Dependency failure** | External API goes down | All dependent services affected |
+| **Retry storms** | Failed requests retry, increasing load | System collapse under load |
+
+<DiagramContainer title="Software Fault Propagation">
+  <ProcessFlow
+    steps={[
+      { title: "Bug Deployed", description: "Same bug on all nodes", color: colors.orange },
+      { title: "Triggered", description: "Specific input causes crash", color: colors.red },
+      { title: "Simultaneous Failure", description: "All nodes crash together", color: colors.red },
+      { title: "System Down", description: "No redundancy helps", color: colors.red }
+    ]}
+  />
+</DiagramContainer>
+
+**Mitigation strategies:**
+
+- Careful testing (unit, integration, chaos)
+- Process isolation (containers, VMs)
+- Crash and restart (let it fail fast)
+- Avoid feedback loops (exponential backoff)
+- Production monitoring and alerting
+
+> **💡 Insight**
+>
+> Hardware faults are **independent**; software faults are **correlated**. This is why redundancy alone doesn't guarantee reliability—three servers running buggy code will all fail the same way. You need defense in depth: testing, isolation, monitoring, and graceful degradation.
+
+### 4.3. Humans and Reliability
+
+**In plain English:** Humans make mistakes—it's inevitable. Blaming people doesn't help. Instead, design systems that make mistakes harder to make and easier to recover from.
+
+**In technical terms:** Human error is the leading cause of outages, but it's a symptom of poor system design, not a root cause. Sociotechnical system design can minimize human-induced failures.
+
+**The data:** One study found:
+- Configuration changes by operators: **leading cause** of outages
+- Hardware faults: only 10–25% of outages
+
+**Why "human error" is misleading:** Blaming individuals ignores systemic issues. When humans make mistakes, it usually indicates:
+- Unclear interfaces
+- Inadequate training
+- Time pressure
+- Poor tooling
+- Complex systems
+
+<DiagramContainer title="Defense in Depth Against Human Error">
+  <ProcessFlow
+    steps={[
+      { title: "Design", description: "Well-designed interfaces encourage correct use", color: colors.blue },
+      { title: "Test", description: "Thorough testing catches mistakes early", color: colors.purple },
+      { title: "Deploy", description: "Gradual rollouts limit blast radius", color: colors.green },
+      { title: "Monitor", description: "Observability detects issues quickly", color: colors.orange },
+      { title: "Recover", description: "Easy rollback mechanisms", color: colors.cyan }
+    ]}
+  />
+</DiagramContainer>
+
+**Technical measures to minimize human mistakes:**
+
+| Measure | How It Helps |
+|---------|--------------|
+| **Testing** | Unit, integration, and end-to-end tests catch bugs before production |
+| **Rollback mechanisms** | Quickly revert bad changes |
+| **Gradual rollouts** | Deploy to small percentage first, catch issues early |
+| **Monitoring** | Detect anomalies and alert operators |
+| **Good interfaces** | Make correct actions obvious, dangerous actions difficult |
+| **Documentation** | Clear runbooks for common operations |
+
+**Blameless postmortems:** After incidents, teams share what happened without fear of punishment. This encourages honesty and systemic learning rather than hiding mistakes.
+
+> **💡 Insight**
+>
+> **Blame is counterproductive.** When incidents happen, ask "What about our system allowed this to occur?" instead of "Who did this?" Culture and tooling that treat mistakes as learning opportunities build more reliable systems than punishment-based approaches.
+
+### 4.4. How Important Is Reliability?
+
+**In plain English:** Even "boring" business apps need reliability. Bugs don't just annoy users—they can destroy lives and businesses.
+
+**In technical terms:** Reliability failures have cascading impacts: lost revenue, damaged reputation, legal liability, and in severe cases, ruined lives. The cost of unreliability far exceeds the cost of building reliable systems.
+
+**Real-world consequences:**
+
+<CardGrid
+  cards={[
+    { title: "E-commerce", description: "Outages = lost revenue + reputation damage", icon: "🛒", color: colors.red },
+    { title: "Business Apps", description: "Lost productivity across organization", icon: "💼", color: colors.orange },
+    { title: "Healthcare", description: "Patient safety at risk", icon: "🏥", color: colors.red },
+    { title: "Financial", description: "Regulatory fines + customer lawsuits", icon: "💰", color: colors.orange }
+  ]}
+  columns={2}
+/>
+
+**Case Study: Post Office Horizon Scandal**
+
+Between 1999 and 2019, hundreds of Post Office branch managers in Britain were **convicted of theft or fraud** because accounting software (Horizon) showed shortfalls in their accounts. Many were imprisoned, went bankrupt, or died before vindication.
+
+<DiagramContainer title="Horizon Scandal Timeline">
+  <ProcessFlow
+    steps={[
+      { title: "1999–2019", description: "Buggy software shows false shortfalls", color: colors.red },
+      { title: "Prosecutions", description: "Hundreds convicted based on software 'evidence'", color: colors.red },
+      { title: "Lives Ruined", description: "Prison, bankruptcy, suicides", color: colors.red },
+      { title: "2019+", description: "Convictions overturned, scandal revealed", color: colors.orange }
+    ]}
+  />
+</DiagramContainer>
+
+**Eventually discovered:** Many shortfalls were due to software bugs, not theft. The system was unreliable, but management trusted it over people.
+
+> **💡 Insight**
+>
+> Unreliable software has **real human costs**. The Horizon scandal shows how software bugs can destroy lives when systems are trusted blindly. Reliability isn't just about uptime—it's about responsibility to the people who depend on your systems.
+
+---
+
+## 5. Scalability
+
+**In plain English:** Scalability means your system can handle growth without falling over. It's not a binary property—you don't "have" scalability. Instead, you plan for specific growth patterns and know when you'll hit limits.
+
+**In technical terms:** Scalability describes a system's ability to maintain performance as load increases. It requires understanding current load, predicting growth, and having a plan to add capacity when needed.
+
+**Why it matters:** Even reliable systems degrade under increased load. Without scalability planning, success can kill your system—viral growth crashes your service just as users discover it.
+
+**Scalability is not:**
+- ❌ "This system is scalable"
+- ❌ "We built for infinite scale"
+- ❌ "It scales horizontally"
+
+**Scalability is:**
+- ✅ "If daily users grow 10x, we'll need 5 more DB replicas"
+- ✅ "We'll hit limits at 50k concurrent users; we're at 20k now"
+- ✅ "Adding 10 nodes doubles our write capacity"
+
+<DiagramContainer title="Key Scalability Questions">
+  <CardGrid
+    cards={[
+      { title: "Growth Pattern", description: "How will the system grow?", icon: "📈", color: colors.blue },
+      { title: "Resource Impact", description: "How does load affect performance?", icon: "⚡", color: colors.purple },
+      { title: "Capacity Planning", description: "When do we add resources?", icon: "🎯", color: colors.green },
+      { title: "Cost Analysis", description: "What's the cost of scaling?", icon: "💰", color: colors.orange }
+    ]}
+    columns={2}
+  />
+</DiagramContainer>
+
+### 5.1. Describing Load
+
+**In plain English:** Before you can scale, you need to measure what "load" means for your system. Is it requests per second? Users online? Data volume? The answer shapes your scaling strategy.
+
+**In technical terms:** Load parameters quantify current system stress. Common metrics include throughput (requests/sec), concurrency (active users), and data volume (GB/day).
+
+**Common load parameters:**
+
+| Metric | Example | Use Case |
+|--------|---------|----------|
+| **Requests/second** | 10,000 API calls/sec | Web services |
+| **Data volume** | 500 GB new data/day | Data pipelines |
+| **Concurrent users** | 100,000 simultaneous users | Gaming, streaming |
+| **Transactions** | 5,000 checkouts/hour | E-commerce |
+
+<DiagramContainer title="Two Key Scalability Questions">
+  <Column gap="lg">
+    <Group title="Question 1: Fixed Resources" color={colors.blue}>
+      <Box color={colors.blue}>Load increases → Resources unchanged → Performance?</Box>
+    </Group>
+    <Group title="Question 2: Fixed Performance" color={colors.green}>
+      <Box color={colors.green}>Load increases → How much to increase resources → Keep same performance?</Box>
+    </Group>
+  </Column>
+</DiagramContainer>
+
+**Linear scalability:** If you can double resources to handle double the load with the same performance, you have linear scalability—the holy grail.
+
+> **💡 Insight**
+>
+> **Load description is application-specific.** For a social network, it might be "posts/second" and "timeline reads/second." For an analytics system, it's "queries/hour" and "data ingestion rate." Understanding your specific load parameters is the first step toward effective scaling.
+
+### 5.2. Shared-Memory, Shared-Disk, and Shared-Nothing Architecture
+
+**In plain English:** There are three ways to add capacity: buy a bigger computer (vertical), connect multiple computers to the same storage (shared-disk), or give each computer its own everything (horizontal).
+
+**In technical terms:** Scaling architectures differ in how they share resources. Each has distinct cost, complexity, and scalability trade-offs.
+
+<DiagramContainer title="Scaling Architectures">
+  <Row gap="lg">
+    <Group title="Shared-Memory (Vertical)" color={colors.blue}>
+      <Column gap="sm">
+        <Box color={colors.blue} size="sm">More CPU</Box>
+        <Box color={colors.blue} size="sm">More RAM</Box>
+        <Box color={colors.blue} size="sm">More Disk</Box>
+        <div style={{fontSize: '0.85rem'}}>Single Machine</div>
+      </Column>
+    </Group>
+    <Group title="Shared-Disk" color={colors.purple}>
+      <Column gap="sm">
+        <Row gap="sm">
+          <Box color={colors.purple} size="sm">CPU 1</Box>
+          <Box color={colors.purple} size="sm">CPU 2</Box>
+        </Row>
+        <Arrow direction="down" />
+        <Box color={colors.slate}>Shared Storage</Box>
+      </Column>
+    </Group>
+    <Group title="Shared-Nothing (Horizontal)" color={colors.green}>
+      <Column gap="sm">
+        <Row gap="sm">
+          <Box color={colors.green} size="sm">Node 1<br/>CPU+Disk</Box>
+          <Box color={colors.green} size="sm">Node 2<br/>CPU+Disk</Box>
+          <Box color={colors.green} size="sm">Node 3<br/>CPU+Disk</Box>
+        </Row>
+        <div style={{fontSize: '0.85rem'}}>Independent Nodes</div>
+      </Column>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+<ComparisonTable
+  items={[
+    { label: "Scalability Limit", before: "CPU/RAM bottlenecks", after: "Potentially linear" },
+    { label: "Cost Curve", before: "Exponential (big machines expensive)", after: "Linear (commodity hardware)" },
+    { label: "Fault Tolerance", before: "Single point of failure", after: "Survive node failures" },
+    { label: "Complexity", before: "Simple (one machine)", after: "Complex (distributed)" },
+    { label: "Coordination", before: "None needed", after: "Consensus, sharding required" }
+  ]}
+  beforeTitle="Vertical Scaling"
+  afterTitle="Horizontal Scaling"
+  beforeColor={colors.blue}
+  afterColor={colors.green}
+/>
+
+**Shared-Nothing advantages:**
+- Linear scalability potential
+- Cost-effective commodity hardware
+- Fault tolerance across nodes
+- Elastic—add/remove nodes dynamically
+- Geographic distribution
+
+**Shared-Nothing challenges:**
+- Complex distributed system logic
+- Data sharding required
+- Network latency
+- Partial failures
+- Eventual consistency
+
+> **💡 Insight**
+>
+> **There's no universal winner.** Vertical scaling is simpler but limited. Horizontal scaling can scale infinitely but adds massive complexity. Modern systems often use both: vertically scale nodes to delay the complexity of distribution, then horizontally scale when necessary.
+
+### 5.3. Principles for Scalability
+
+**In plain English:** Scalability isn't one-size-fits-all. A system that handles millions of tiny requests needs different architecture than one processing huge analytics queries. The key is breaking work into independent pieces.
+
+**In technical terms:** Scalable architectures decompose systems into loosely-coupled components that can operate independently. This enables parallel processing and localized failures.
+
+**Core principles:**
+
+<CardGrid
+  cards={[
+    { title: "Independent Components", description: "Break system into parts that don't need each other", icon: "🧩", color: colors.blue },
+    { title: "Simplicity First", description: "Don't distribute until necessary", icon: "✨", color: colors.green },
+    { title: "Measure Everything", description: "Know your bottlenecks before scaling", icon: "📊", color: colors.purple },
+    { title: "Plan for Growth", description: "Understand limits and growth trajectory", icon: "🎯", color: colors.orange }
+  ]}
+  columns={2}
+/>
+
+**Examples of decomposition:**
+
+| Pattern | Description | Benefit |
+|---------|-------------|---------|
+| **Microservices** | Split application into independent services | Teams work independently |
+| **Sharding** | Partition data across nodes by key | Parallel data processing |
+| **Stream processing** | Break large jobs into small, independent tasks | Continuous, incremental processing |
+| **Caching** | Store precomputed results | Reduce load on primary system |
+
+> **💡 Insight**
+>
+> **Scalability is not automatic.** There's no "scalable architecture" you can copy. Systems that scale well at social networks (many tiny writes) fail at analytics (few huge queries). Design for your specific load patterns, and **don't make things more complicated than necessary**—a single-machine database is often better than a distributed mess.
+
+---
+
+## 6. Maintainability
+
+**In plain English:** Software doesn't wear out like machines, but it does "age" as requirements change, platforms evolve, and knowledge decays. Maintainability means designing systems that stay easy to work with over time.
+
+**In technical terms:** Maintainability encompasses operability (ease of running), simplicity (ease of understanding), and evolvability (ease of changing). These determine the long-term cost and viability of systems.
+
+**Why it matters:** Most software cost isn't initial development—it's **ongoing maintenance**. A system used for years will spend far more on bug fixes, feature additions, and operational costs than its original build.
+
+<DiagramContainer title="Software Lifecycle Costs">
+  <Row gap="sm">
+    <Box color={colors.blue} size="sm">Initial Dev<br/>20%</Box>
+    <Box color={colors.orange} size="lg">Ongoing Maintenance<br/>80%</Box>
+  </Row>
+</DiagramContainer>
+
+**Maintenance activities:**
+- Fixing bugs
+- Keeping systems operational
+- Investigating failures
+- Adapting to new platforms
+- Modifying for new use cases
+- Repaying technical debt
+- Adding new features
+
+<DiagramContainer title="Three Pillars of Maintainability">
+  <CardGrid
+    cards={[
+      { title: "Operability", description: "Easy to keep running smoothly", icon: "⚙️", color: colors.blue },
+      { title: "Simplicity", description: "Easy for new engineers to understand", icon: "✨", color: colors.purple },
+      { title: "Evolvability", description: "Easy to make changes in future", icon: "🔄", color: colors.green }
+    ]}
+    columns={3}
+  />
+</DiagramContainer>
+
+### 6.1. Operability: Making Life Easy for Operations
+
+**In plain English:** Operations teams keep systems running—deploying updates, handling incidents, scaling resources. Good operability means routine tasks are easy, freeing operators to focus on high-value work.
+
+**In technical terms:** Operability is the ease with which operators can maintain a system's health. Well-designed systems provide good observability, automation, and sensible defaults.
+
+> _"Good operations can often work around the limitations of bad software, but good software cannot run reliably with bad operations."_
+
+**What good operability provides:**
+
+<CardGrid
+  cards={[
+    { title: "Monitoring", description: "Visibility into system health", icon: "📊", color: colors.blue },
+    { title: "Automation", description: "Routine tasks don't need humans", icon: "🤖", color: colors.purple },
+    { title: "Documentation", description: "Clear operational model", icon: "📚", color: colors.green },
+    { title: "Predictability", description: "Minimal surprises", icon: "🎯", color: colors.orange },
+    { title: "Self-healing", description: "Automatic recovery where safe", icon: "🔧", color: colors.cyan },
+    { title: "Good Defaults", description: "Works well out of the box", icon: "⚡", color: colors.pink }
+  ]}
+  columns={3}
+/>
+
+**Operations responsibilities:**
+
+| Task | Good Operability | Poor Operability |
+|------|------------------|------------------|
+| **Monitoring** | Dashboards show key metrics, alerts fire before users notice | Logs scattered, no alerts, discover issues from user complaints |
+| **Deployment** | Automated, gradual rollout, easy rollback | Manual steps, all-or-nothing, no rollback |
+| **Scaling** | Auto-scaling based on metrics | Manual server provisioning |
+| **Incidents** | Clear runbooks, automatic diagnostics | Guesswork, tribal knowledge |
+
+> **💡 Insight**
+>
+> **Operability enables reliability.** Even the best-designed system will fail if operators can't understand, monitor, or repair it. Invest in observability and automation—they're not luxuries, they're requirements for reliable production systems.
+
+### 6.2. Simplicity: Managing Complexity
+
+**In plain English:** Simple code is easy to understand. Complex code is a tangled mess where changing one thing breaks three others. As projects grow, fighting complexity becomes critical.
+
+**In technical terms:** Complexity is the enemy of maintainability. Systems mired in complexity—"big balls of mud"—resist change and harbor bugs. Simplicity through abstraction manages this complexity.
+
+**Symptoms of excessive complexity:**
+
+<DiagramContainer title="Signs of a Big Ball of Mud">
+  <CardGrid
+    cards={[
+      { title: "Explosion of State Space", description: "Too many possible states", icon: "💥", color: colors.red },
+      { title: "Tight Coupling", description: "Changing A breaks B and C", icon: "🔗", color: colors.orange },
+      { title: "Tangled Dependencies", description: "Circular, unclear relationships", icon: "🕸️", color: colors.red },
+      { title: "Inconsistent Naming", description: "Same thing called differently", icon: "📝", color: colors.orange },
+      { title: "Special Cases", description: "Hacks and workarounds everywhere", icon: "🔧", color: colors.red },
+      { title: "No Onboarding", description: "Takes months to understand", icon: "❓", color: colors.orange }
+    ]}
+    columns={3}
+  />
+</DiagramContainer>
+
+**Abstraction: The tool for managing complexity**
+
+<DiagramContainer title="How Abstraction Simplifies">
+  <Row gap="lg">
+    <Group title="Without Abstraction" color={colors.red}>
+      <Column gap="sm">
+        <Box color={colors.red} size="sm">Machine Code</Box>
+        <Box color={colors.red} size="sm">Memory Mgmt</Box>
+        <Box color={colors.red} size="sm">Disk I/O</Box>
+        <Box color={colors.red} size="sm">Network Protocol</Box>
+        <div style={{fontSize: '0.85rem'}}>All details visible</div>
+      </Column>
+    </Group>
+    <Arrow direction="right" label="abstraction" />
+    <Group title="With Abstraction" color={colors.green}>
+      <Column gap="sm">
+        <Box color={colors.green}>High-Level Language</Box>
+        <Box color={colors.green}>SQL Database</Box>
+        <div style={{fontSize: '0.85rem'}}>Implementation hidden</div>
+      </Column>
+    </Group>
+  </Row>
+</DiagramContainer>
+
+**Examples of good abstractions:**
+- **High-level languages** hide machine code details
+- **SQL** hides on-disk data structures and query optimization
+- **HTTP** hides TCP packet management
+- **React** hides DOM manipulation
+
+**Building for simplicity:**
+
+| Principle | How It Helps |
+|-----------|--------------|
+| **Clear interfaces** | Hide implementation details |
+| **Consistent conventions** | Reduce cognitive load |
+| **Remove accidental complexity** | Keep only essential complexity |
+| **Avoid premature optimization** | Simpler code is better than "clever" code |
+
+> **💡 Insight**
+>
+> **Simplicity is not simplistic.** A good abstraction hides enormous complexity behind a clean interface (like SQL hiding B-trees and query planners). The goal isn't to avoid complexity entirely—it's to manage it through layers of abstraction so each layer is simple.
+
+### 6.3. Evolvability: Making Change Easy
+
+**In plain English:** Requirements never stop changing. Features get added, platforms evolve, business needs shift. Evolvable systems adapt to change easily instead of resisting it.
+
+**In technical terms:** Evolvability (also called extensibility or modifiability) is the ease of making changes to a system. It's closely linked to simplicity—loosely-coupled, simple systems are easier to modify.
+
+**Why requirements change:**
+
+<CardGrid
+  cards={[
+    { title: "User Needs", description: "Features users want evolve", icon: "👥", color: colors.blue },
+    { title: "Business Goals", description: "Company strategy shifts", icon: "🎯", color: colors.purple },
+    { title: "Technology", description: "New platforms emerge", icon: "💻", color: colors.green },
+    { title: "Scale", description: "Growth demands different solutions", icon: "📈", color: colors.orange }
+  ]}
+  columns={2}
+/>
+
+**Factors that enable evolvability:**
+
+| Factor | Description |
+|--------|-------------|
+| **Loose coupling** | Components can change independently |
+| **Good abstractions** | Implementation changes don't affect interface |
+| **Comprehensive tests** | Confidence that changes don't break things |
+| **Reversibility** | Easy to undo changes if needed |
+| **Clear documentation** | Understand system to change it safely |
+
+<DiagramContainer title="Reversibility Enables Flexibility">
+  <Row gap="lg">
+    <Column gap="sm">
+      <Box color={colors.red}>Irreversible Changes</Box>
+      <div style={{fontSize: '0.9rem', color: colors.red}}>
+        • Careful planning required<br/>
+        • Risk of wrong choice<br/>
+        • Paralysis by analysis
+      </div>
+    </Column>
+    <Arrow direction="right" />
+    <Column gap="sm">
+      <Box color={colors.green}>Reversible Changes</Box>
+      <div style={{fontSize: '0.9rem', color: colors.green}}>
+        • Experiment freely<br/>
+        • Learn from mistakes<br/>
+        • Iterate quickly
+      </div>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> **Irreversibility kills evolvability.** When changes can't be undone, teams become paralyzed—every decision feels permanent. Minimize irreversibility through feature flags, database migrations (not destructive changes), and architectures that support gradual transitions. The easier it is to reverse a decision, the faster you can evolve.
+
+---
+
+## 7. Summary
+
+**In plain English:** This chapter taught you how to think about the qualities that make systems good beyond just functionality: how fast they respond, whether they stay up when things break, if they can grow with demand, and whether they'll become a maintenance nightmare.
+
+**In technical terms:** Nonfunctional requirements—performance, reliability, scalability, and maintainability—are as critical as functional requirements. Understanding how to measure and optimize these qualities is essential for building production-grade systems.
+
+<DiagramContainer title="The Four Pillars">
+  <CardGrid
+    cards={[
+      {
+        title: "Performance",
+        description: "Measured via percentiles (p50, p95, p99) and throughput",
+        icon: "⚡",
+        color: colors.blue,
+        items: [
+          "Response time distributions",
+          "Tail latency amplification",
+          "SLAs based on percentiles"
+        ]
+      },
+      {
+        title: "Reliability",
+        description: "Continues working correctly when things go wrong",
+        icon: "🛡️",
+        color: colors.green,
+        items: [
+          "Fault tolerance mechanisms",
+          "Hardware + software faults",
+          "Human error mitigation"
+        ]
+      },
+      {
+        title: "Scalability",
+        description: "Maintains performance as load increases",
+        icon: "📈",
+        color: colors.purple,
+        items: [
+          "Describe load parameters",
+          "Vertical vs horizontal scaling",
+          "Independent components"
+        ]
+      },
+      {
+        title: "Maintainability",
+        description: "Easy to operate, understand, and evolve",
+        icon: "🔧",
+        color: colors.orange,
+        items: [
+          "Operability via automation",
+          "Simplicity via abstraction",
+          "Evolvability via loose coupling"
+        ]
+      }
+    ]}
+    columns={2}
+  />
+</DiagramContainer>
+
+### Key Takeaways
+
+**Performance:**
+- Use **percentiles** (p50, p95, p99) instead of averages to describe response time
+- High percentiles matter—tail latencies affect valuable users
+- **Tail latency amplification** occurs when requests require multiple backend calls
+
+**Reliability:**
+- Distinguish **faults** (component failures) from **failures** (system-wide breakdown)
+- Fault tolerance prevents faults from becoming failures
+- Hardware faults are independent; software faults are correlated
+- Human error is a symptom, not a cause—design systems to minimize it
+
+**Scalability:**
+- Scalability is not binary—describe specific growth patterns and limits
+- **Vertical scaling** (bigger machines) is simple but limited
+- **Horizontal scaling** (more machines) scales linearly but adds complexity
+- Break systems into independent components for better scalability
+
+**Maintainability:**
+- Most cost is **ongoing maintenance**, not initial development
+- **Operability:** Make it easy to run
+- **Simplicity:** Use abstraction to manage complexity
+- **Evolvability:** Minimize irreversibility to enable change
+
+> **💡 Insight**
+>
+> These four qualities are **interconnected**. A system that's hard to maintain will eventually become unreliable as tech debt accumulates. A system that can't scale will have poor performance under load. A system that's too complex resists both scaling and evolution. Good architecture considers all dimensions together, making conscious trade-offs rather than ignoring any one aspect.
+
+---
+
+**Previous:** [Chapter 1: Trade-offs in Data Systems Architecture](./chapter01-tradeoffs.md) | **Next:** [Chapter 3: Data Models and Query Languages](./chapter03-data-models.mdx)

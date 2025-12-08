@@ -1,0 +1,2184 @@
+---
+sidebar_position: 3
+title: "Chapter 13. A Philosophy of Streaming Systems"
+description: "Understand the philosophy and principles behind modern streaming architectures, data integration, and building correct distributed systems"
+---
+
+import { DiagramContainer, Row, Column, Box, Arrow, Group, ProcessFlow, CardGrid, StackDiagram, ConnectionDiagram, ComparisonTable, colors } from '@site/src/components/diagrams/Diagram';
+
+# Chapter 13. A Philosophy of Streaming Systems
+
+> If a thing be ordained to another as to its end, its last end cannot consist in the preservation of its being. Hence a captain does not intend as a last end, the preservation of the ship entrusted to him, since a ship is ordained to something else as its end, viz. to navigation.
+>
+> (Often quoted as: If the highest aim of a captain was to preserve his ship, he would keep it in port forever.)
+>
+> _St. Thomas Aquinas, Summa Theologica (1265–1274)_
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [Data Integration](#2-data-integration)
+   - 2.1. [Combining Specialized Tools by Deriving Data](#21-combining-specialized-tools-by-deriving-data)
+   - 2.2. [Reasoning About Dataflows](#22-reasoning-about-dataflows)
+   - 2.3. [Derived Data Versus Distributed Transactions](#23-derived-data-versus-distributed-transactions)
+   - 2.4. [The Limits of Total Ordering](#24-the-limits-of-total-ordering)
+   - 2.5. [Ordering Events to Capture Causality](#25-ordering-events-to-capture-causality)
+3. [Batch and Stream Processing](#3-batch-and-stream-processing)
+   - 3.1. [Maintaining Derived State](#31-maintaining-derived-state)
+   - 3.2. [Reprocessing Data for Application Evolution](#32-reprocessing-data-for-application-evolution)
+   - 3.3. [Unifying Batch and Stream Processing](#33-unifying-batch-and-stream-processing)
+4. [Unbundling Databases](#4-unbundling-databases)
+   - 4.1. [Composing Data Storage Technologies](#41-composing-data-storage-technologies)
+   - 4.2. [Federated Databases: Unifying Reads](#42-federated-databases-unifying-reads)
+   - 4.3. [Unbundled Databases: Unifying Writes](#43-unbundled-databases-unifying-writes)
+   - 4.4. [Making Unbundling Work](#44-making-unbundling-work)
+5. [Designing Applications Around Dataflow](#5-designing-applications-around-dataflow)
+   - 5.1. [Application Code as a Derivation Function](#51-application-code-as-a-derivation-function)
+   - 5.2. [Separation of Application Code and State](#52-separation-of-application-code-and-state)
+   - 5.3. [Dataflow: Interplay Between State Changes and Application Code](#53-dataflow-interplay-between-state-changes-and-application-code)
+   - 5.4. [Stream Processors and Services](#54-stream-processors-and-services)
+6. [Observing Derived State](#6-observing-derived-state)
+   - 6.1. [Materialized Views and Caching](#61-materialized-views-and-caching)
+   - 6.2. [Stateful, Offline-Capable Clients](#62-stateful-offline-capable-clients)
+   - 6.3. [Pushing State Changes to Clients](#63-pushing-state-changes-to-clients)
+   - 6.4. [End-to-End Event Streams](#64-end-to-end-event-streams)
+   - 6.5. [Reads Are Events Too](#65-reads-are-events-too)
+7. [Aiming for Correctness](#7-aiming-for-correctness)
+   - 7.1. [The End-to-End Argument for Databases](#71-the-end-to-end-argument-for-databases)
+   - 7.2. [Exactly-Once Execution of an Operation](#72-exactly-once-execution-of-an-operation)
+   - 7.3. [Duplicate Suppression](#73-duplicate-suppression)
+   - 7.4. [The End-to-End Argument](#74-the-end-to-end-argument)
+8. [Enforcing Constraints](#8-enforcing-constraints)
+   - 8.1. [Uniqueness Constraints Require Consensus](#81-uniqueness-constraints-require-consensus)
+   - 8.2. [Uniqueness in Log-Based Messaging](#82-uniqueness-in-log-based-messaging)
+   - 8.3. [Multi-Shard Request Processing](#83-multi-shard-request-processing)
+9. [Timeliness and Integrity](#9-timeliness-and-integrity)
+   - 9.1. [Correctness of Dataflow Systems](#91-correctness-of-dataflow-systems)
+   - 9.2. [Loosely Interpreted Constraints](#92-loosely-interpreted-constraints)
+   - 9.3. [Coordination-Avoiding Data Systems](#93-coordination-avoiding-data-systems)
+10. [Trust, But Verify](#10-trust-but-verify)
+    - 10.1. [Maintaining Integrity in the Face of Software Bugs](#101-maintaining-integrity-in-the-face-of-software-bugs)
+    - 10.2. [Don't Just Blindly Trust What They Promise](#102-dont-just-blindly-trust-what-they-promise)
+    - 10.3. [Designing for Auditability](#103-designing-for-auditability)
+    - 10.4. [Tools for Auditable Data Systems](#104-tools-for-auditable-data-systems)
+11. [Summary](#11-summary)
+
+---
+
+## 1. Introduction
+
+**In plain English:** Imagine trying to fix a ship while it's sailing across the ocean. You can't just keep it in port forever to make it perfect—you need to maintain and improve it while it's in motion. The same is true for data systems: you can't freeze your application to make it correct; you need to build systems that can evolve, recover from errors, and stay reliable while continuously serving users.
+
+**In technical terms:** This chapter synthesizes the themes of reliability, scalability, and maintainability from throughout this book, focusing on building applications around streaming and event-driven architectures. It presents a philosophy of application development that maintains correctness without sacrificing performance or operational flexibility.
+
+**Why it matters:** Traditional approaches like distributed transactions and strong consistency are expensive and brittle at scale. By understanding how to build systems around dataflow principles, you can create applications that are both more reliable and more scalable than those built with conventional approaches.
+
+In Chapter 2, we discussed creating applications that are reliable, scalable, and maintainable. In this chapter, we bring all these ideas together, building on the streaming and event-driven architecture concepts from Chapter 12 to develop a comprehensive philosophy for application development.
+
+> **💡 Insight**
+>
+> This chapter is more opinionated than previous ones. Rather than comparing multiple approaches, it presents a deep dive into one particular philosophy: using dataflow and stream processing as the foundation for building correct, scalable systems. This represents where the industry is heading, not just academic theory.
+
+---
+
+## 2. Data Integration
+
+### 2.1. Combining Specialized Tools by Deriving Data
+
+**In plain English:** Just as you wouldn't use a hammer for every job in construction, you shouldn't use a single database for every data need. An e-commerce site might use PostgreSQL for transactions, Elasticsearch for product search, Redis for caching, and Snowflake for analytics. Each tool excels at its specific job, but now you need to keep them synchronized.
+
+**In technical terms:** Complex applications use data in multiple ways, and no single piece of software suits all usage patterns. You inevitably need to integrate several different storage systems—OLTP databases, full-text search indexes, caches, data warehouses, and machine learning systems—each serving different access patterns.
+
+**Why it matters:** The real challenge isn't picking the right tool for one job—it's integrating multiple specialized tools so they work together coherently. Poor integration leads to inconsistent data, manual synchronization work, and systems that break in subtle ways.
+
+<DiagramContainer title="Common Data Integration Scenario">
+  <Column gap="lg">
+    <Group title="Primary System of Record" color={colors.blue}>
+      <Box color={colors.blue}>PostgreSQL Database</Box>
+    </Group>
+
+    <Arrow direction="down" label="Change Data Capture" />
+
+    <Row gap="lg">
+      <Box color={colors.green} variant="outlined">Elasticsearch Index</Box>
+      <Box color={colors.purple} variant="outlined">Redis Cache</Box>
+      <Box color={colors.orange} variant="outlined">Analytics Warehouse</Box>
+      <Box color={colors.cyan} variant="outlined">ML Feature Store</Box>
+    </Row>
+
+    <Box color={colors.slate} variant="subtle" size="sm">
+      All derived systems stay in sync through event streams
+    </Box>
+  </Column>
+</DiagramContainer>
+
+Common integration patterns include:
+
+- **OLTP + Full-text search**: PostgreSQL with built-in full-text search works for simple cases, but sophisticated search requires specialized tools like Elasticsearch
+- **Database + Cache**: Keeping cached views in sync with the database
+- **Transactional + Analytics**: Moving data from OLTP systems to data warehouses
+- **Raw data + ML systems**: Feeding data through feature engineering pipelines
+
+### 2.2. Reasoning About Dataflows
+
+**In plain English:** Think of your data systems like a factory assembly line. Raw materials (writes to your database) enter at one point, get processed through various stations (derived systems), and emerge as finished products (search results, analytics, recommendations). To keep everything working correctly, you need to know: Where does data enter? What transformations happen? In what order?
+
+**In technical terms:** When maintaining copies of the same data in multiple storage systems, you must be explicit about inputs and outputs: where is data written first, and which representations are derived from which sources? Understanding the dataflow makes it possible to reason about consistency guarantees.
+
+**Why it matters:** Without clear dataflow, you get race conditions where different systems see writes in different orders, leading to permanent inconsistencies. With clear dataflow through a single ordered source, you can make strong guarantees about system behavior.
+
+<DiagramContainer title="Clear Dataflow vs. Ambiguous Dataflow">
+  <Row gap="lg">
+    <Column gap="md">
+      <Box color={colors.green} size="sm">GOOD: Single Write Path</Box>
+      <ProcessFlow
+        steps={[
+          { title: "Write to Database", description: "Single source of truth", color: colors.blue },
+          { title: "Capture Changes", description: "CDC produces ordered log", color: colors.purple },
+          { title: "Update Search Index", description: "Processes log in order", color: colors.green }
+        ]}
+        direction="vertical"
+      />
+      <Box color={colors.green} variant="subtle" size="sm">
+        Consistent: index reflects database
+      </Box>
+    </Column>
+
+    <Column gap="md">
+      <Box color={colors.red} size="sm">BAD: Multiple Write Paths</Box>
+      <Group title="Concurrent Writes" color={colors.red}>
+        <Column gap="sm">
+          <Row gap="sm">
+            <Box color={colors.slate} size="sm">Client 1</Box>
+            <Arrow direction="right" />
+            <Box color={colors.blue} size="sm">Database</Box>
+          </Row>
+          <Row gap="sm">
+            <Box color={colors.slate} size="sm">Client 2</Box>
+            <Arrow direction="right" />
+            <Box color={colors.orange} size="sm">Search Index</Box>
+          </Row>
+        </Column>
+      </Group>
+      <Box color={colors.red} variant="subtle" size="sm">
+        Race condition: different orders!
+      </Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Key principle:** Funnel all user input through a single system that decides on an ordering for all writes. This is an application of state machine replication—whether you use change data capture or event sourcing is less important than simply deciding on a total order.
+
+> **💡 Insight**
+>
+> Allowing applications to write directly to multiple systems introduces the problem shown in Figure 12-4 from Chapter 12: two clients can send conflicting writes, and the storage systems may process them in different orders. When you funnel all writes through a single ordered log, derived systems can process events in the same order, guaranteeing consistency.
+
+### 2.3. Derived Data Versus Distributed Transactions
+
+**In plain English:** There are two ways to keep multiple systems in sync: the "ask permission" approach (distributed transactions) and the "process the log" approach (derived data). Distributed transactions are like getting everyone's signature before taking action—safe but slow and prone to deadlock. Derived data is like having a to-do list that each system works through at its own pace—eventually everyone gets in sync.
+
+**In technical terms:** Both distributed transactions and derived data systems achieve similar goals through different means. Distributed transactions use locks for mutual exclusion and atomic commit for exactly-once semantics. Derived data systems use logs for ordering and deterministic retry with idempotence for the same guarantees.
+
+**Why it matters:** Distributed transactions (especially XA) have poor fault tolerance and performance characteristics. Log-based derived data offers a more promising path to integrating different data systems, though it requires accepting asynchronous updates rather than immediate read-your-writes consistency.
+
+<ComparisonTable
+  beforeTitle="Distributed Transactions"
+  afterTitle="Log-Based Derived Data"
+  beforeColor={colors.orange}
+  afterColor={colors.green}
+  items={[
+    { label: "Ordering", before: "Locks for mutual exclusion", after: "Log provides total order" },
+    { label: "Atomicity", before: "Two-phase commit (2PC)", after: "Deterministic retry + idempotence" },
+    { label: "Consistency", before: "Read-your-writes immediately", after: "Eventually consistent (async)" },
+    { label: "Fault Tolerance", before: "Poor: any participant can abort", after: "Good: isolated failures" },
+    { label: "Performance", before: "Coordination overhead", after: "High throughput" },
+    { label: "Adoption", before: "XA rarely used in practice", after: "Widely used (Kafka, CDC)" }
+  ]}
+/>
+
+**Trade-offs:**
+
+- **Immediate consistency**: Distributed transactions guarantee you can immediately read what you wrote, while derived data systems update asynchronously
+- **Fault tolerance**: XA transactions have poor fault tolerance, while log-based systems contain failures locally
+- **Industry adoption**: XA is rarely used due to practical problems, while log-based derived data has become the standard
+
+The challenge is building stronger guarantees (like reading your own writes) on top of asynchronously derived systems—a topic we'll explore later in this chapter.
+
+### 2.4. The Limits of Total Ordering
+
+**In plain English:** Imagine trying to keep a diary where every event in your life must have an exact timestamp and order. Easy when you're alone in one place, but what if you're collaborating with people on different continents, each with their own diary? Now reconciling who did what when becomes complex. The same problem occurs with distributed event logs.
+
+**In technical terms:** Constructing a totally ordered event log works well for systems small enough to funnel everything through a single leader node. As systems scale, limitations emerge: sharding requires coordination between shards, geo-distribution creates ordering ambiguities between datacenters, microservices have no shared state, and client-side state means different devices see events in different orders.
+
+**Why it matters:** Total ordering (equivalent to consensus) doesn't scale indefinitely. Understanding these limits helps you design systems that work correctly even when total ordering isn't feasible.
+
+<DiagramContainer title="Challenges to Total Ordering at Scale">
+  <CardGrid columns={2} cards={[
+    {
+      title: "Throughput Limits",
+      icon: "⚡",
+      color: colors.orange,
+      description: "Single leader bottleneck",
+      items: [
+        "Single node throughput ceiling",
+        "Sharding creates ambiguous order",
+        "No mechanism to parallelize"
+      ]
+    },
+    {
+      title: "Geographic Distribution",
+      icon: "🌍",
+      color: colors.blue,
+      description: "Cross-datacenter coordination",
+      items: [
+        "Network latency between regions",
+        "Separate leaders per datacenter",
+        "Undefined cross-region ordering"
+      ]
+    },
+    {
+      title: "Microservices",
+      icon: "🔧",
+      color: colors.purple,
+      description: "Independent services",
+      items: [
+        "No shared durable state",
+        "Events from different services",
+        "Service autonomy vs. coordination"
+      ]
+    },
+    {
+      title: "Client-Side State",
+      icon: "📱",
+      color: colors.green,
+      description: "Offline-first applications",
+      items: [
+        "Updates without server confirmation",
+        "Work offline then sync",
+        "Clients see different orders"
+      ]
+    }
+  ]} />
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> Deciding on a total order of events is formally known as total order broadcast, which is equivalent to consensus. Most consensus algorithms assume a single node can handle the entire event stream, and don't provide mechanisms for parallelizing the ordering work across multiple nodes.
+
+### 2.5. Ordering Events to Capture Causality
+
+**In plain English:** Imagine posting "I got the job!" on social media, then immediately removing your ex-partner as a friend before they see it. You expect the unfriend to happen before they see the post. But if these actions update different systems (social graph and notifications), the notification system might alert your ex before the unfriend takes effect—an awkward mistake!
+
+**In technical terms:** When events originate in different services or shards, there's no defined order. This becomes problematic when there are causal dependencies between events. For example, one user removes another as a friend, then sends a message intended only for remaining friends. If the systems processing these events see them in different orders, the unfriend event might be processed after the message-send event.
+
+**Why it matters:** Causal dependencies can lead to violations of user expectations and application invariants. Systems need ways to capture and preserve causality even when total ordering isn't feasible.
+
+<DiagramContainer title="Causality Violation Example">
+  <ProcessFlow
+    steps={[
+      { title: "User unfriends ex-partner", description: "Updates social graph", color: colors.blue },
+      { title: "User posts rude message", description: "Expects ex won't see it", color: colors.purple },
+      { title: "Notification service processes", description: "Message might arrive first!", color: colors.red },
+      { title: "Ex receives notification", description: "Causality violated", color: colors.red }
+    ]}
+    direction="vertical"
+  />
+</DiagramContainer>
+
+**Approaches to handling causality:**
+
+1. **Logical timestamps**: Provide total ordering without coordination (see Lamport clocks), but require recipients to handle out-of-order events and carry additional metadata
+
+2. **Event identifiers**: Log an event recording the system state the user saw before making a decision, then reference that event ID in later events to record causal dependencies
+
+3. **Conflict resolution algorithms**: Help with processing out-of-order events when maintaining state, but don't help with external side effects (like sending notifications)
+
+> **💡 Insight**
+>
+> Causal dependencies often arise in subtle ways. The notification example is effectively a join between messages and the friend list, making it related to the time-dependence of joins discussed in Chapter 12. Future application development patterns may emerge that capture causal dependencies efficiently without forcing all events through total order broadcast.
+
+---
+
+## 3. Batch and Stream Processing
+
+### 3.1. Maintaining Derived State
+
+**In plain English:** Think of batch and stream processing like maintaining a restaurant's inventory and menu. The inventory (raw ingredients) is your source data. The menu items (prepared dishes) are derived data. Stream processing is like cooking dishes to order as customers arrive. Batch processing is like preparing ingredients in bulk every morning. Both keep your menu offerings in sync with available ingredients.
+
+**In technical terms:** The goal of data integration is ensuring data reaches the right form in all the right places. Batch and stream processors achieve this by consuming inputs, transforming, joining, filtering, aggregating, training models, and writing to appropriate outputs. Their outputs are derived datasets: search indexes, materialized views, recommendations, and aggregate metrics.
+
+**Why it matters:** Both batch and stream processing have functional programming principles—deterministic functions with well-defined inputs and outputs. This makes reasoning about dataflows straightforward and enables fault tolerance through recomputation.
+
+<DiagramContainer title="Batch and Stream Processing for Derived State">
+  <Row gap="lg">
+    <Column gap="md">
+      <Box color={colors.blue}>Source Data</Box>
+      <Box color={colors.slate} variant="subtle" size="sm">
+        System of record (immutable)
+      </Box>
+    </Column>
+
+    <Arrow direction="right" />
+
+    <Column gap="md">
+      <Group title="Processing" color={colors.purple}>
+        <Column gap="sm">
+          <Box color={colors.purple} size="sm">Stream: Low latency</Box>
+          <Box color={colors.purple} size="sm">Batch: Reprocess history</Box>
+        </Column>
+      </Group>
+      <Box color={colors.slate} variant="subtle" size="sm">
+        Deterministic transformations
+      </Box>
+    </Column>
+
+    <Arrow direction="right" />
+
+    <Column gap="md">
+      <Group title="Derived Data" color={colors.green}>
+        <Column gap="sm">
+          <Box color={colors.green} size="sm">Search Indexes</Box>
+          <Box color={colors.green} size="sm">ML Models</Box>
+          <Box color={colors.green} size="sm">Caches</Box>
+        </Column>
+      </Group>
+      <Box color={colors.slate} variant="subtle" size="sm">
+        Queryable outputs
+      </Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Key principles:**
+
+- **Deterministic functions**: Output depends only on input, no side effects beyond explicit outputs
+- **Immutable inputs**: Treat inputs as read-only
+- **Append-only outputs**: New outputs don't modify previous results
+- **Asynchronous processing**: Fault in one part doesn't spread to others (unlike distributed transactions)
+
+> **💡 Insight**
+>
+> Derived data systems could be maintained synchronously (like relational databases update secondary indexes within the same transaction), but asynchrony is what makes event log-based systems robust. It allows faults to be contained locally, whereas distributed transactions amplify failures by spreading them across the system.
+
+### 3.2. Reprocessing Data for Application Evolution
+
+**In plain English:** Imagine renovating a house while people live in it. You can't shut it down for months, so you build the new version alongside the old, gradually move people over, and keep the old version as a safety net. Reprocessing data enables the same approach for evolving data systems: build new derived views alongside old ones, test thoroughly, and switch over gradually with the ability to roll back.
+
+**In technical terms:** Stream processing reflects input changes in derived views with low delay, while batch processing reprocesses large amounts of historical data to derive new views. Reprocessing enables significant schema evolution—not just adding fields, but completely restructuring datasets into different models.
+
+**Why it matters:** Without reprocessing, you're limited to simple schema changes. With reprocessing, you can fundamentally restructure your data model as requirements change, all while maintaining a working production system.
+
+**Schema Migrations in the Real World:**
+
+The railway industry provides a useful analogy. In 19th-century England, competing track gauges (the distance between rails) prevented trains built for one gauge from running on tracks of another. After standardizing in 1846, existing non-standard tracks had to be converted.
+
+<DiagramContainer title="Dual-Gauge Railway Conversion">
+  <ProcessFlow
+    steps={[
+      { title: "Original Track", description: "Non-standard gauge only", color: colors.red },
+      { title: "Add Third Rail", description: "Dual gauge supports both", color: colors.orange },
+      { title: "Gradual Conversion", description: "Old and new trains coexist", color: colors.blue },
+      { title: "Remove Old Rail", description: "Standard gauge only", color: colors.green }
+    ]}
+    direction="horizontal"
+  />
+</DiagramContainer>
+
+The solution: convert tracks to dual gauge by adding a third rail. During the transition, trains of both gauges could operate. Eventually, once all trains converted to standard gauge, the redundant rail could be removed.
+
+**Applying this to data systems:**
+
+<DiagramContainer title="Gradual Data Model Migration">
+  <ProcessFlow
+    steps={[
+      { title: "Old Schema in Production", description: "Existing users and systems", color: colors.blue },
+      { title: "Deploy New Schema Alongside", description: "Both derived from same source", color: colors.purple },
+      { title: "Route Some Users to New", description: "A/B test performance and bugs", color: colors.orange },
+      { title: "Gradually Increase %", description: "Expand to all users over time", color: colors.green },
+      { title: "Drop Old Schema", description: "Fully migrated", color: colors.green }
+    ]}
+    direction="vertical"
+  />
+</DiagramContainer>
+
+**Benefits of gradual migration:**
+
+- **Reversible at every stage**: Always have a working system to fall back to
+- **Reduced risk**: Test with small user percentages before full rollout
+- **Faster iteration**: Confidence to make changes enables moving faster
+- **Production validation**: Discover issues under real load
+
+> **💡 Insight**
+>
+> The beauty of gradual migration is that every stage is easily reversible if something goes wrong. By reducing the risk of irreversible damage, you can be more confident about making changes, and thus move faster to improve your system. This is the same philosophy as feature flags and blue-green deployments.
+
+### 3.3. Unifying Batch and Stream Processing
+
+**In plain English:** Early attempts to combine batch and stream processing (like Lambda architecture) maintained separate batch and stream codebases that did the same computation differently—a maintenance nightmare. Modern systems (Kappa architecture) let you write processing logic once and run it over both historical batch data and live streaming data.
+
+**In technical terms:** Unifying batch and stream processing in one system requires: (1) replaying historical events through the same processing engine that handles recent events, (2) exactly-once semantics even with faults, and (3) windowing by event time rather than processing time.
+
+**Why it matters:** Maintaining separate batch and stream codebases doubles your implementation and testing burden. Unified systems let you use the same logic for both reprocessing historical data (batch) and processing live events (stream).
+
+<ComparisonTable
+  beforeTitle="Lambda Architecture (Deprecated)"
+  afterTitle="Kappa Architecture (Modern)"
+  beforeColor={colors.red}
+  afterColor={colors.green}
+  items={[
+    { label: "Codebase", before: "Separate batch & stream code", after: "Single unified codebase" },
+    { label: "Consistency", before: "Different implementations may diverge", after: "Same logic for both paths" },
+    { label: "Maintenance", before: "Fix bugs in two places", after: "Fix once, runs everywhere" },
+    { label: "Reprocessing", before: "Switch to batch system", after: "Replay log through same engine" },
+    { label: "Examples", before: "(Largely abandoned)", after: "Flink, Beam, Kafka Streams" }
+  ]}
+/>
+
+**Requirements for unified batch/stream processing:**
+
+1. **Replay capability**: Log-based message brokers can replay historical messages, and stream processors can read from distributed filesystems or object storage
+
+2. **Exactly-once semantics**: Ensure output is the same as if no faults occurred, requiring discarding partial output of failed tasks (like batch processing)
+
+3. **Event-time windowing**: When reprocessing historical data, processing time is meaningless—you need to window by the timestamp in the event itself
+
+**Example frameworks:**
+
+- **Apache Beam**: API for expressing windowed computations over event time
+- **Apache Flink**: Unified batch and stream processing with exactly-once guarantees
+- **Google Cloud Dataflow**: Managed service based on Beam model
+
+---
+
+## 4. Unbundling Databases
+
+**In plain English:** Traditional databases are like all-in-one kitchen appliances—they do many things, but none perfectly. Unbundling is like having specialized tools: a blender for smoothies, a food processor for chopping, a stand mixer for baking. Each excels at its job, and you can upgrade one without replacing everything. Similarly, unbundling databases means using specialized systems for storage, search, caching, and analytics, connected by event logs.
+
+**In technical terms:** At an abstract level, databases, batch/stream processors, and operating systems all perform the same functions: store data and allow processing/querying. Databases and operating systems approached information management with different philosophies—Unix with low-level abstractions (files, pipes), relational databases with high-level abstractions (SQL, transactions). Unbundling reconciles these philosophies by composing specialized systems.
+
+**Why it matters:** Rather than forcing all workloads into a single database, unbundling lets you use the best tool for each job while maintaining consistency through log-based integration. This provides both breadth (handling diverse workloads) and maintainability (evolving each component independently).
+
+<DiagramContainer title="Traditional Database vs. Unbundled System">
+  <Row gap="lg">
+    <Column gap="md">
+      <Box color={colors.blue} size="sm">Traditional: All-in-One</Box>
+      <Group title="Single Database" color={colors.blue}>
+        <Column gap="sm">
+          <Box color={colors.blue} size="sm">OLTP Storage</Box>
+          <Box color={colors.blue} size="sm">Secondary Indexes</Box>
+          <Box color={colors.blue} size="sm">Full-Text Search</Box>
+          <Box color={colors.blue} size="sm">Materialized Views</Box>
+          <Box color={colors.blue} size="sm">Replication</Box>
+        </Column>
+      </Group>
+      <Box color={colors.slate} variant="subtle" size="sm">
+        One system, many features
+      </Box>
+    </Column>
+
+    <Column gap="md">
+      <Box color={colors.green} size="sm">Unbundled: Specialized</Box>
+      <Column gap="sm">
+        <Box color={colors.blue}>PostgreSQL (OLTP)</Box>
+        <Arrow direction="down" label="Event Log" />
+        <Row gap="sm">
+          <Box color={colors.purple} size="sm">Elasticsearch</Box>
+          <Box color={colors.orange} size="sm">Redis</Box>
+          <Box color={colors.cyan} size="sm">Snowflake</Box>
+        </Row>
+      </Column>
+      <Box color={colors.slate} variant="subtle" size="sm">
+        Best tool for each job
+      </Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Historical context:**
+
+- **Unix philosophy** (1970s): Low-level abstractions (files, pipes) that are simple and composable
+- **Relational databases** (1970s): High-level abstractions (SQL, transactions) that hide complexity
+- **NoSQL movement** (2000s): Attempted to apply Unix-like simplicity to distributed storage
+- **Modern unbundling** (2010s+): Compose specialized systems using event logs, getting the best of both approaches
+
+### 4.1. Composing Data Storage Technologies
+
+**In plain English:** Modern databases have many built-in features: secondary indexes for fast lookups, materialized views for precomputed queries, replication logs to keep replicas in sync, and full-text search for keyword queries. With batch and stream processing, you can build these same features as separate systems, connected by event logs.
+
+**In technical terms:** Database features like secondary indexes, materialized views, replication logs, and full-text search have parallels in batch and stream processing. Creating an index in a database involves scanning a table snapshot, picking out field values, sorting them, writing the index, processing the write backlog, and continuously maintaining the index—remarkably similar to setting up a new stream processor or follower replica.
+
+**Why it matters:** Recognizing the parallels between database internals and stream processing reveals that you can compose specialized systems to achieve the same functionality as an integrated database, but with more flexibility in choosing and evolving each component.
+
+**Example: Creating an Index**
+
+When you run `CREATE INDEX` in a database:
+
+<ProcessFlow
+  steps={[
+    { title: "Snapshot Table", description: "Read consistent snapshot", color: colors.blue },
+    { title: "Extract & Sort Values", description: "Build index structure", color: colors.purple },
+    { title: "Process Backlog", description: "Apply writes during snapshot", color: colors.orange },
+    { title: "Maintain Continuously", description: "Update with new writes", color: colors.green }
+  ]}
+  direction="horizontal"
+/>
+
+This is the same as:
+- Setting up a new follower replica (Chapter 6)
+- Bootstrapping change data capture (Chapter 12)
+- Stream processing with catch-up from log
+
+**The Meta-Database of Everything:**
+
+From this perspective, the dataflow across an entire organization looks like one huge database:
+
+<DiagramContainer title="Organization as Distributed Database">
+  <StackDiagram
+    title="Layered Data Systems"
+    layers={[
+      { label: "Data Sources (Systems of Record)", color: colors.blue, items: ["Application DB", "Service APIs", "Event Logs"] },
+      { label: "Processing Layer (Like Triggers & Procedures)", color: colors.purple, items: ["Batch Jobs", "Stream Processors", "ETL Pipelines"] },
+      { label: "Derived Data (Like Indexes & Views)", color: colors.green, items: ["Search Indexes", "Caches", "Analytics", "ML Models"] },
+      { label: "Query Layer", color: colors.orange, items: ["REST APIs", "SQL Interfaces", "GraphQL"] }
+    ]}
+  />
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> Batch and stream processors are like elaborate implementations of database triggers, stored procedures, and materialized view maintenance. The derived systems they maintain are like different index types. Instead of implementing these as features of a single database, they're provided by various pieces of software, running on different machines, administered by different teams.
+
+### 4.2. Federated Databases: Unifying Reads
+
+**In plain English:** Imagine having files stored in Dropbox, Google Drive, and OneDrive, but using a single search interface to find documents across all of them. Federated databases work similarly—they provide a unified query interface to underlying storage engines while each storage engine remains independent.
+
+**In technical terms:** Federated databases (also called polystores) provide a unified query interface to diverse underlying storage engines and processing methods. Applications needing specialized data models can still access storage engines directly, while users combining data from disparate sources can do so through the federated interface.
+
+**Why it matters:** Federation addresses read-only queries across different systems, letting data teams query without understanding the internals of each storage system. It follows the relational tradition of elegant high-level interfaces, but with support for heterogeneous backends.
+
+**Examples:**
+
+- **PostgreSQL Foreign Data Wrappers**: Query external databases and files through SQL
+- **Trino (formerly Presto)**: Federated SQL queries across data lakes, databases, and cloud storage
+- **Hoptimator**: Query optimizer for heterogeneous data sources
+- **Xorq**: Federated query engine
+
+<DiagramContainer title="Federated Query Architecture">
+  <Column gap="md">
+    <Box color={colors.blue}>Unified Query Interface (SQL)</Box>
+
+    <Arrow direction="down" label="Translates queries" />
+
+    <Group title="Federated Query Engine" color={colors.purple}>
+      <Box color={colors.purple} size="sm">Query Planning & Optimization</Box>
+    </Group>
+
+    <Arrow direction="down" label="Routes to backends" />
+
+    <Row gap="md">
+      <Box color={colors.green} size="sm">PostgreSQL</Box>
+      <Box color={colors.orange} size="sm">S3 / Parquet</Box>
+      <Box color={colors.cyan} size="sm">MongoDB</Box>
+      <Box color={colors.pink} size="sm">Elasticsearch</Box>
+    </Row>
+  </Column>
+</DiagramContainer>
+
+**Limitation:** Federation solves reads but doesn't address keeping writes synchronized across these systems—that requires unbundling.
+
+### 4.3. Unbundled Databases: Unifying Writes
+
+**In plain English:** While federation lets you query across systems, it doesn't solve the harder problem: ensuring writes reach all systems in the right order. Unbundling is like having a to-do list (event log) that each system works through independently. Everyone processes the same events in the same order, so they all converge to the same state, even if they work at different speeds.
+
+**In technical terms:** Within a single database, creating a consistent index is built-in. When composing several storage systems, you need to ensure all data changes reach all the right places, even with faults. Unbundling databases means reliably connecting storage systems through change data capture and event logs, similar to how databases internally maintain indexes.
+
+**Why it matters:** Synchronizing writes is the hard engineering problem in data integration. Event logs with idempotent consumers provide a simpler, more robust solution than distributed transactions, especially across heterogeneous systems.
+
+<DiagramContainer title="Unbundled Write Synchronization">
+  <ProcessFlow
+    steps={[
+      { title: "Write to Primary", description: "Single source of truth", color: colors.blue },
+      { title: "Event Log Captures", description: "CDC produces ordered events", color: colors.purple },
+      { title: "Consumers Process", description: "Each system at its own pace", color: colors.green },
+      { title: "Idempotent Updates", description: "Tolerate retries and failures", color: colors.green }
+    ]}
+    direction="vertical"
+  />
+</DiagramContainer>
+
+**Approach:**
+
+Instead of distributed transactions across systems, unbundling uses:
+
+1. **Ordered event log**: Provides total order within each shard/partition
+2. **Change data capture**: Extracts changes from source systems into the log
+3. **Idempotent consumers**: Process events with at-least-once delivery, handling duplicates gracefully
+4. **Deterministic processing**: Same inputs always produce same outputs
+
+> **💡 Insight**
+>
+> The unbundled approach follows the Unix tradition of small tools that do one thing well, communicate through a uniform low-level API (pipes → logs), and compose using a higher-level language (shell → stream processors). Federation follows the relational tradition of a single integrated system with high-level query semantics.
+
+### 4.4. Making Unbundling Work
+
+**In plain English:** Think of unbundling like modular furniture. Individual pieces are simple and robust, but you need good connectors (the event log) to make them work together. The advantage is that if one piece breaks, you can fix or replace it without affecting others. The trade-off is managing more moving parts.
+
+**In technical terms:** Synchronizing writes requires coordination between heterogeneous systems. Traditional distributed transactions handle this but suffer from poor adoption and fault tolerance. An ordered event log with idempotent consumers provides a simpler abstraction that works across diverse technologies without standardized transaction protocols.
+
+**Why it matters:** Log-based integration provides loose coupling that manifests at both system and human levels, making the overall system more robust and enabling teams to work independently.
+
+<CardGrid columns={2} cards={[
+  {
+    title: "System-Level Benefits",
+    icon: "🔧",
+    color: colors.blue,
+    description: "Technical advantages",
+    items: [
+      "Asynchronous event streams buffer slowdowns",
+      "Failures contained locally, not amplified",
+      "Consumers can catch up after recovery",
+      "No distributed transaction overhead"
+    ]
+  },
+  {
+    title: "Human-Level Benefits",
+    icon: "👥",
+    color: colors.green,
+    description: "Organizational advantages",
+    items: [
+      "Different teams develop independently",
+      "Specialize in doing one thing well",
+      "Well-defined interfaces between systems",
+      "Deploy and evolve at different paces"
+    ]
+  }
+]} />
+
+**When to use integrated vs. unbundled systems:**
+
+**Use an integrated system when:**
+- Single technology satisfies all requirements
+- Simpler operations (fewer moving parts)
+- Better predictable performance for target workload
+- Team expertise in one system
+
+**Use unbundled systems when:**
+- No single technology fits all needs
+- Need diverse workloads (OLTP + analytics + search + ML)
+- Different teams with different specialized tools
+- Requirement to evolve components independently
+
+**Tools enabling composition:**
+
+- **Debezium**: Extract change streams from many databases
+- **Kafka Connect**: Standardized connectors for data sources/sinks
+- **Incremental view maintenance engines**: Precompute and update complex query caches
+- **Exactly-once stream processors**: Flink, Kafka Streams provide reliable event processing
+
+> **💡 Insight**
+>
+> The goal of unbundling is not to compete with individual databases on performance for particular workloads—it's to combine several different databases to achieve good performance across a much wider range of workloads than possible with a single piece of software. It's about breadth, not depth.
+
+---
+
+## 5. Designing Applications Around Dataflow
+
+### 5.1. Application Code as a Derivation Function
+
+**In plain English:** Think of how spreadsheets work: you write a formula in one cell (like summing a column), and whenever the input cells change, the result automatically recalculates. You don't manually refresh it. Data systems should work the same way: when a record changes, indexes should automatically update, caches should refresh, and derived views should recalculate—all without manual intervention.
+
+**In technical terms:** Creating derived datasets requires transformation functions. For secondary indexes, the function extracts and sorts specific field values. For full-text search, it applies NLP processing (language detection, stemming, etc.) and builds inverted indexes. For machine learning, it applies feature extraction and statistical analysis. For caches, it aggregates data in the format needed by the UI.
+
+**Why it matters:** Most data systems today require manual work to keep derived data synchronized. By thinking in terms of derivation functions and dataflow, you can build systems that automatically maintain derived state—like spreadsheets, but at data system scale with durability and fault tolerance.
+
+<DiagramContainer title="Different Derivation Functions">
+  <CardGrid columns={2} cards={[
+    {
+      title: "Secondary Index",
+      icon: "📇",
+      color: colors.blue,
+      description: "Straightforward transformation",
+      items: [
+        "Extract field values from records",
+        "Sort by those values",
+        "Build B-tree or SSTable",
+        "Built into most databases"
+      ]
+    },
+    {
+      title: "Full-Text Search",
+      icon: "🔍",
+      color: colors.purple,
+      description: "NLP processing",
+      items: [
+        "Language detection",
+        "Word segmentation & stemming",
+        "Spelling correction",
+        "Build inverted index"
+      ]
+    },
+    {
+      title: "Machine Learning Model",
+      icon: "🧠",
+      color: colors.green,
+      description: "Statistical derivation",
+      items: [
+        "Feature extraction (app-specific)",
+        "Statistical analysis of training data",
+        "Model is derived from inputs",
+        "Apply model to new data"
+      ]
+    },
+    {
+      title: "UI Cache",
+      icon: "⚡",
+      color: colors.orange,
+      description: "Display aggregation",
+      items: [
+        "Aggregate data for UI display",
+        "Precompute expensive queries",
+        "Must match UI field references",
+        "UI changes require cache updates"
+      ]
+    }
+  ]} />
+</DiagramContainer>
+
+**Challenge with custom derivation functions:**
+
+While databases have built-in support for secondary indexes (`CREATE INDEX`), custom derivations require application code. Database features for running custom code (triggers, stored procedures, user-defined functions) have been afterthoughts and don't integrate well with modern development practices:
+
+- Package and dependency management
+- Version control and code review
+- Rolling upgrades and deployment
+- Monitoring, metrics, and observability
+- Integration with external services
+
+> **💡 Insight**
+>
+> When the derivation function is not a standard cookie-cutter operation like creating a secondary index, custom code is required to handle application-specific aspects. This is where many databases struggle—their execution environments don't fit well with modern application development requirements.
+
+### 5.2. Separation of Application Code and State
+
+**In plain English:** Imagine if every restaurant kept all its ingredients inside the chef's personal backpack. That would be absurd—ingredients belong in a centralized kitchen (database), while chefs (application servers) can be interchangeable. This is exactly how modern web applications work: stateless servers can handle any request, while state lives in a database.
+
+**In technical terms:** Most web applications today deploy as stateless services where any request can route to any server, and servers forget everything after sending responses. State lives in databases. This separation keeps stateless application logic separate from state management—not putting application logic in the database and not putting persistent state in the application.
+
+**Why it matters:** This architecture enables easy scaling (add or remove servers at will), but it treats databases as passive mutable variables. Unlike spreadsheets where cells automatically recalculate when dependencies change, you must manually poll databases to detect changes.
+
+<DiagramContainer title="Traditional Stateless Application Architecture">
+  <Column gap="md">
+    <Row gap="md">
+      <Box color={colors.blue} size="sm">Stateless App Server 1</Box>
+      <Box color={colors.blue} size="sm">Stateless App Server 2</Box>
+      <Box color={colors.blue} size="sm">Stateless App Server 3</Box>
+    </Row>
+
+    <Arrow direction="down" label="Read/Write Requests" />
+
+    <Group title="Shared Mutable State" color={colors.purple}>
+      <Box color={colors.purple}>Database</Box>
+    </Group>
+
+    <Box color={colors.slate} variant="subtle" size="sm">
+      Any server can handle any request (good for scaling)
+      But must poll to detect state changes (passive model)
+    </Box>
+  </Column>
+</DiagramContainer>
+
+**The passive data problem:**
+
+In most programming languages, you cannot subscribe to changes in a mutable variable—you can only read it periodically. Databases inherited this passive approach:
+
+- To detect changes, you must poll (repeat queries periodically)
+- No automatic notifications when data changes
+- Observer pattern must be implemented manually
+- Change subscriptions are only beginning to emerge
+
+**Joke from functional programming community:**
+
+> "We believe in the separation of Church and state"
+
+Explanation: Church refers to Alonzo Church, creator of lambda calculus (basis for functional programming), which has no mutable state. The joke plays on keeping mutable state separate from pure functional computation.
+
+### 5.3. Dataflow: Interplay Between State Changes and Application Code
+
+**In plain English:** Instead of treating your database as a passive storage bucket that you manually read and write, imagine it as a living system where state changes automatically trigger computations. When a user clicks "buy," that event automatically flows through inventory updates, payment processing, notification systems, and analytics—each component reacting to relevant state changes like a carefully choreographed dance.
+
+**In technical terms:** Thinking in terms of dataflow means renegotiating the relationship between application code and state management. Rather than treating databases as passive variables manipulated by applications, focus on the interplay between state, state changes, and code that processes them. Application code responds to state changes in one place by triggering state changes in another place.
+
+**Why it matters:** This pattern (already seen in change data capture, actor model, triggers, and incremental view maintenance) can be extended to create derived datasets outside the primary database—caches, search indexes, ML systems, analytics—using stream processing and messaging systems.
+
+<DiagramContainer title="Dataflow-Driven Application">
+  <ProcessFlow
+    steps={[
+      { title: "User Action (Write)", description: "Event written to log", color: colors.blue },
+      { title: "Stream Processor 1", description: "Updates search index", color: colors.purple },
+      { title: "Stream Processor 2", description: "Sends notifications", color: colors.green },
+      { title: "Stream Processor 3", description: "Updates analytics", color: colors.orange }
+    ]}
+    direction="horizontal"
+  />
+
+  <Box color={colors.slate} variant="subtle" size="sm">
+    State changes flow through the system, triggering computations
+  </Box>
+</DiagramContainer>
+
+**Requirements for maintaining derived data:**
+
+Log-based message brokers can provide these essential properties:
+
+1. **Ordering**: When maintaining derived data, the order of state changes is often important. If several views derive from an event log, they need to process events in the same order to remain consistent
+
+2. **Fault tolerance**: Losing a single message causes the derived dataset to go permanently out of sync. Both message delivery and derived state updates must be reliable
+
+3. **Deterministic processing**: Same inputs should produce same outputs, enabling recovery through reprocessing
+
+**Benefits vs. distributed transactions:**
+
+- Stable message ordering and fault-tolerant processing are less expensive than distributed transactions
+- More operationally robust (failures don't cascade)
+- Can achieve comparable correctness guarantees
+- Allows arbitrary application code as stream operators
+
+> **💡 Insight**
+>
+> Like Unix tools chained by pipes, stream operators can be composed to build large systems around dataflow. Each operator takes streams of state changes as input and produces other streams of state changes as output. This composability is powerful for building complex systems from simple components.
+
+### 5.4. Stream Processors and Services
+
+**In plain English:** Traditional microservices make synchronous network calls—Service A asks Service B for data, waits for a response, then continues. This is like calling someone on the phone: if they don't answer, you're blocked. Dataflow systems use asynchronous messages—services subscribe to relevant data streams and maintain local copies. This is like getting email updates: you process them when convenient, and the sender doesn't wait for you.
+
+**In technical terms:** Service-oriented architecture breaks functionality into services communicating via synchronous network requests (REST APIs). This provides organizational scalability through loose coupling. Dataflow systems use asynchronous message streams instead of synchronous request/response, composing stream operators similarly to microservices but with different communication mechanisms.
+
+**Why it matters:** Dataflow systems can achieve better performance and fault tolerance than traditional REST APIs by eliminating synchronous network requests. The fastest and most reliable network request is no network request at all!
+
+**Example: Currency Conversion**
+
+A customer purchases an item priced in one currency, paid in another. You need the current exchange rate.
+
+<DiagramContainer title="Microservices vs. Dataflow Approach">
+  <Row gap="lg">
+    <Column gap="md">
+      <Box color={colors.orange} size="sm">Microservices Approach</Box>
+      <ProcessFlow
+        steps={[
+          { title: "Purchase Request", description: "User buys item", color: colors.blue },
+          { title: "Query Exchange Service", description: "Synchronous network call", color: colors.orange },
+          { title: "Wait for Response", description: "Blocked until reply", color: colors.red },
+          { title: "Process Purchase", description: "Use received rate", color: colors.green }
+        ]}
+        direction="vertical"
+      />
+      <Box color={colors.red} variant="subtle" size="sm">
+        Slow, brittle: depends on exchange service availability
+      </Box>
+    </Column>
+
+    <Column gap="md">
+      <Box color={colors.green} size="sm">Dataflow Approach</Box>
+      <ProcessFlow
+        steps={[
+          { title: "Subscribe to Rates", description: "Before any purchases", color: colors.purple },
+          { title: "Maintain Local Cache", description: "Update as rates change", color: colors.blue },
+          { title: "Purchase Request", description: "User buys item", color: colors.blue },
+          { title: "Query Local DB", description: "Instant, no network call", color: colors.green }
+        ]}
+        direction="vertical"
+      />
+      <Box color={colors.green} variant="subtle" size="sm">
+        Fast, robust: no dependency on remote service
+      </Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Benefits of the dataflow approach:**
+
+- **Performance**: Local database query instead of network request
+- **Reliability**: No dependency on another service being available
+- **Consistency**: Explicit handling of time-dependent joins (exchange rates change over time)
+
+**Trade-off:**
+
+The dataflow approach has replaced a synchronous network call with a local query. The microservices approach could also cache exchange rates locally and refresh periodically—which is essentially subscribing to a change stream!
+
+**Time dependency consideration:**
+
+If you reprocess purchase events later, exchange rates will have changed. To reconstruct original outputs, you need historical exchange rates at the time of each purchase. Both approaches must handle this time dependence, but the dataflow approach makes it explicit through stream joins.
+
+> **💡 Insight**
+>
+> Subscribing to a stream of changes, rather than querying current state when needed, brings us closer to a spreadsheet-like model of computation: when some piece of data changes, any derived data that depends on it can swiftly be updated. This is a very promising direction for building responsive applications.
+
+---
+
+## 6. Observing Derived State
+
+### 6.1. Materialized Views and Caching
+
+**In plain English:** Imagine running a restaurant. You could cook every dish from scratch when ordered (slow but fresh), or pre-cook everything and just reheat (fast but wasteful if dishes go uneaten). Real restaurants do something in between: prep common ingredients in advance, and finish dishes when ordered. Data systems work the same way: indexes are like prepped ingredients, caches are like pre-cooked popular dishes.
+
+**In technical terms:** The write path is the portion of the data journey that is precomputed eagerly as soon as data arrives. The read path is the portion that only happens when someone requests it. Derived datasets represent the trade-off between work done at write time versus read time—similar to eager vs. lazy evaluation in functional programming.
+
+**Why it matters:** Understanding the write/read path boundary helps you optimize for different workloads. No single position for this boundary is optimal for all use cases—different applications need different trade-offs.
+
+<DiagramContainer title="Write Path Meets Read Path">
+  <Row gap="lg">
+    <Column gap="md">
+      <Group title="Write Path (Eager)" color={colors.blue}>
+        <ProcessFlow
+          steps={[
+            { title: "Document Created", description: "User writes data", color: colors.blue },
+            { title: "Linguistic Analysis", description: "NLP processing", color: colors.purple },
+            { title: "Update Index", description: "Add to inverted index", color: colors.green }
+          ]}
+          direction="vertical"
+        />
+      </Group>
+      <Box color={colors.slate} variant="subtle" size="sm">
+        Precomputation before queries arrive
+      </Box>
+    </Column>
+
+    <Column gap="md">
+      <Box color={colors.orange}>Derived Dataset</Box>
+      <Box color={colors.orange} variant="outlined">Search Index</Box>
+      <Box color={colors.slate} variant="subtle" size="sm">
+        Where write and read paths meet
+      </Box>
+    </Column>
+
+    <Column gap="md">
+      <Group title="Read Path (Lazy)" color={colors.green}>
+        <ProcessFlow
+          steps={[
+            { title: "User Query", description: "Search keywords", color: colors.green },
+            { title: "Index Lookup", description: "Find matching docs", color: colors.blue },
+            { title: "Boolean Logic", description: "AND/OR operators", color: colors.purple },
+            { title: "Return Results", description: "Ranked matches", color: colors.green }
+          ]}
+          direction="vertical"
+        />
+      </Group>
+      <Box color={colors.slate} variant="subtle" size="sm">
+        On-demand processing when needed
+      </Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Full-text search example:**
+
+The index represents a middle ground between extremes:
+
+| Approach | Write Path | Read Path | Trade-off |
+|----------|-----------|-----------|-----------|
+| **No index (grep)** | None | Scan all documents | Fast writes, slow reads |
+| **Inverted index** | Update index entries | Search index + Boolean logic | Balanced |
+| **Precompute all queries** | Compute all possible results | Just lookup | Infeasible (exponential queries) |
+| **Cache common queries** | Precompute popular queries | Check cache, fallback to index | Good for predictable workloads |
+
+> **💡 Insight**
+>
+> Caches, indexes, and materialized views all serve the same role: they shift the boundary between read and write paths. They allow us to do more work on the write path, by precomputing results, in order to save effort on the read path. After 500 pages, we've come full circle to the social network timeline example from Chapter 1!
+
+### 6.2. Stateful, Offline-Capable Clients
+
+**In plain English:** Old-school web browsers were like dumb terminals—they could only work with an internet connection, and every action required asking the server. Modern web and mobile apps are more like smartphones—they can do useful work offline, store data locally, and sync with servers in the background. This shift dramatically improves user experience, especially on slow or unreliable networks.
+
+**In technical terms:** Traditional web browsers were stateless clients requiring internet connections for any functionality. Modern single-page JavaScript web apps and mobile apps maintain significant stateful capabilities: client-side UI interaction, persistent local storage, and background synchronization. Users can work offline and sync with remote servers when network connections are available.
+
+**Why it matters:** Maintaining state on end-user devices enables applications to work offline and provide responsive UIs that don't wait for network requests. This is especially valuable for mobile devices with slow or unreliable cellular connections.
+
+<DiagramContainer title="Client-Side State Evolution">
+  <ComparisonTable
+    beforeTitle="Traditional Web (Stateless)"
+    afterTitle="Modern Apps (Stateful)"
+    beforeColor={colors.orange}
+    afterColor={colors.green}
+    items={[
+      { label: "Local State", before: "None (except cache)", after: "Full local database" },
+      { label: "Offline Capability", before: "Only scroll cached pages", after: "Full offline functionality" },
+      { label: "Network Dependency", before: "Every action requires network", after: "Background sync only" },
+      { label: "UI Responsiveness", before: "Wait for server round-trip", after: "Instant local updates" },
+      { label: "Data Model", before: "Server owns truth", after: "Local replica of remote state" }
+    ]}
+  />
+</DiagramContainer>
+
+**Client state as a cache:**
+
+When you move away from stateless clients and central databases toward state maintained on end-user devices, new opportunities emerge:
+
+- **Screen pixels**: Materialized view onto model objects in client app
+- **Model objects**: Local replica of state in remote datacenter
+- **Sync mechanism**: Background process keeps replicas consistent
+
+This is the same principle as derived data systems, but extended all the way to the edge (user devices).
+
+> **💡 Insight**
+>
+> By thinking of on-device state as a cache of server state, we can apply the same principles we've developed for maintaining derived data systems. The client becomes another consumer of the event stream, maintaining a local materialized view that updates as events arrive.
+
+### 6.3. Pushing State Changes to Clients
+
+**In plain English:** Traditional web pages are like reading a newspaper—you see what was printed this morning, and to see updates, you must buy the afternoon edition. Modern apps are like watching live TV—updates appear automatically as they happen. Instead of clients repeatedly asking "any updates yet?", the server pushes changes as they occur.
+
+**In technical terms:** Traditional HTTP-based web pages load data once and don't learn about server-side changes until the page reloads. Users see a stale snapshot unless they explicitly poll. Modern protocols (server-sent events via EventSource API, WebSockets) allow servers to actively push messages to browsers over persistent TCP connections, keeping client-side state current.
+
+**Why it matters:** Actively pushing state changes all the way to client devices extends the write path to end users. This reduces staleness, provides better user experience, and aligns with the dataflow model of reactive programming.
+
+<DiagramContainer title="Polling vs. Push Model">
+  <Row gap="lg">
+    <Column gap="md">
+      <Box color={colors.orange} size="sm">Traditional: Polling</Box>
+      <ProcessFlow
+        steps={[
+          { title: "Client: Any updates?", description: "Repeated requests", color: colors.orange },
+          { title: "Server: No", description: "Most requests wasted", color: colors.slate },
+          { title: "Client: Any updates?", description: "Still polling", color: colors.orange },
+          { title: "Server: Yes, here!", description: "Eventually finds update", color: colors.green }
+        ]}
+        direction="vertical"
+      />
+      <Box color={colors.orange} variant="subtle" size="sm">
+        Wasteful: most polls find nothing
+      </Box>
+    </Column>
+
+    <Column gap="md">
+      <Box color={colors.green} size="sm">Modern: Server Push</Box>
+      <ProcessFlow
+        steps={[
+          { title: "Client: Subscribe", description: "Open persistent connection", color: colors.blue },
+          { title: "Server: Connected", description: "Keep TCP connection alive", color: colors.green },
+          { title: "Data Changes", description: "State update occurs", color: colors.purple },
+          { title: "Server: Push update", description: "Immediately notify client", color: colors.green }
+        ]}
+        direction="vertical"
+      />
+      <Box color={colors.green} variant="subtle" size="sm">
+        Efficient: updates arrive when they occur
+      </Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Technologies enabling push:**
+
+- **Server-Sent Events (SSE)**: EventSource API for one-way server-to-client messages
+- **WebSockets**: Full bidirectional communication channel
+- **HTTP/2 Server Push**: Proactively send resources before client requests
+
+**Handling offline devices:**
+
+Devices are offline part of the time and can't receive notifications during those periods. But this problem is already solved: in "Consumer offsets" (Chapter 12), we discussed how log-based message brokers let consumers reconnect after disconnection and catch up on missed messages. The same technique works for individual user devices—each device is a subscriber to its own stream of relevant events.
+
+### 6.4. End-to-End Event Streams
+
+**In plain English:** Imagine a live sports scoreboard. When a goal is scored, the change flows instantly from the referee's device → league servers → TV networks → your screen. Modern web apps can work the same way: user actions on one device trigger state changes that flow through backend services and emerge as UI updates on other users' devices, all in under a second.
+
+**In technical terms:** Modern UI frameworks like React and Elm already have the ability to update rendered interfaces in response to state changes. Extending this programming model to allow servers to push state-change events into the client-side event pipeline creates end-to-end event streams: from user interaction on one device, through event logs and stream processors, to UI updates on other devices.
+
+**Why it matters:** This architecture provides low-latency state propagation (under one second end-to-end) and enables real-time collaborative applications. Some apps (instant messaging, online games) already work this way—why not build all applications like this?
+
+<DiagramContainer title="End-to-End Event Stream">
+  <ProcessFlow
+    steps={[
+      { title: "User Action", description: "Click 'Like' on Device A", color: colors.blue },
+      { title: "Event Published", description: "Write to event log", color: colors.purple },
+      { title: "Stream Processing", description: "Update derived state", color: colors.orange },
+      { title: "Push to Subscribers", description: "Notify interested clients", color: colors.green },
+      { title: "UI Update", description: "React re-renders on Device B", color: colors.green }
+    ]}
+    direction="horizontal"
+  />
+
+  <Box color={colors.slate} variant="subtle" size="sm">
+    Under 1 second from action to UI update across devices
+  </Box>
+</DiagramContainer>
+
+**The challenge:**
+
+Request/response interactions are deeply ingrained in databases, libraries, frameworks, and protocols:
+
+- Most datastores support read/write operations returning a single response
+- Few provide ability to subscribe to changes (request returning a stream of responses)
+- Client frameworks assume stateless request/response model
+- HTTP is designed around single request → single response
+
+**The opportunity:**
+
+Moving toward publish/subscribe dataflow would require rethinking many systems, but would provide significant benefits:
+
+- More responsive user interfaces
+- Better offline support
+- Real-time collaboration features
+- Reduced server load (push instead of polling)
+
+> **💡 Insight**
+>
+> To extend the write path all the way to end users, we need to fundamentally rethink how we build many systems: moving away from request/response interaction toward publish/subscribe dataflow. This requires effort, but would make user interfaces more responsive and provide better offline support.
+
+### 6.5. Reads Are Events Too
+
+**In plain English:** What if every time someone looked at a product on your e-commerce site, that "read" was treated as an event, just like "write" events (purchases, updates)? You could track what users saw before they made decisions, reconstruct exactly what information led to purchases, and analyze how UI changes affect user behavior. This event log of reads enables powerful analytics and debugging.
+
+**In technical terms:** So far, we've treated writes as events going through event logs while reads are transient network requests directly querying storage. But reads can also be represented as events and sent through stream processors. When both writes and reads are events routed to the same operator, you're performing a stream-table join between the stream of read queries and the database.
+
+**Why it matters:** Recording read events enables tracking causal dependencies across systems, reconstructing what users saw before making decisions, and powerful debugging capabilities (time-travel debugging). It also enables distributed multi-shard query processing.
+
+<DiagramContainer title="Reads as Events">
+  <Column gap="md">
+    <Row gap="lg">
+      <Column gap="sm">
+        <Box color={colors.blue} size="sm">Traditional</Box>
+        <Box color={colors.blue}>Write Events</Box>
+        <Arrow direction="right" label="Through log" />
+        <Box color={colors.green}>Storage</Box>
+        <Arrow direction="left" label="Direct query" />
+        <Box color={colors.orange}>Read Requests</Box>
+      </Column>
+
+      <Column gap="sm">
+        <Box color={colors.green} size="sm">Reads as Events</Box>
+        <ProcessFlow
+          steps={[
+            { title: "Write Events", description: "Updates to state", color: colors.blue },
+            { title: "Read Events", description: "Queries as events", color: colors.orange },
+            { title: "Stream Processor", description: "Joins writes + reads", color: colors.purple },
+            { title: "Response Stream", description: "Results as events", color: colors.green }
+          ]}
+          direction="horizontal"
+        />
+      </Column>
+    </Row>
+
+    <Box color={colors.slate} variant="subtle" size="sm">
+      Both reads and writes flow through same event processing infrastructure
+    </Box>
+  </Column>
+</DiagramContainer>
+
+**Applications:**
+
+1. **Causal dependency tracking**: Reconstruct what user saw before making decisions
+
+2. **E-commerce example**: Record predicted shipping date and inventory status shown to customer, then analyze how these affect purchase decisions
+
+3. **Multi-shard query processing**: Distributed queries requiring data from multiple shards can be expressed as read events, with stream processors joining data from different shards
+
+4. **Fraud prevention**: Assess risk by joining purchase event with reputation scores from multiple sharded datasets (IP address, email, billing address, etc.)
+
+**Trade-offs:**
+
+- **Additional storage and I/O**: Logging reads incurs overhead
+- **Optimization research**: Reducing overhead is an open research problem
+- **Operational logging**: Many systems already log reads for operations; making the log the source of requests isn't a huge change
+
+**Correspondence to joins:**
+
+When a read request passes through the stream processor, it's a one-off join that's immediately forgotten. A subscribe request is a persistent join with past and future events on the other side of the join. This correspondence between serving requests and performing joins is fundamental to understanding dataflow systems.
+
+> **💡 Insight**
+>
+> This idea opens the possibility of distributed execution of complex queries across multiple shards, taking advantage of the infrastructure for message routing, sharding, and joining already provided by stream processors. Storm's distributed RPC feature and various fraud prevention systems use this pattern successfully.
+
+---
+
+## 7. Aiming for Correctness
+
+### 7.1. The End-to-End Argument for Databases
+
+**In plain English:** Just because you use a high-security vault doesn't mean your valuables are safe if you leave the door open. Similarly, just because you use a database with serializable transactions doesn't mean your application is free from data corruption if your application code has bugs that write incorrect data. You need end-to-end guarantees, not just individual component guarantees.
+
+**In technical terms:** Using a data system with strong safety properties (like serializable transactions) doesn't guarantee the application is free from data loss or corruption. If application bugs write incorrect data or delete data incorrectly, serializable transactions won't save you. Correctness requires end-to-end measures throughout the entire system.
+
+**Why it matters:** Low-level reliability mechanisms (like serializability) are necessary but not sufficient. You still need application-level fault tolerance mechanisms, and these are hard to get right—most application-level mechanisms don't work correctly.
+
+**Why this is challenging:**
+
+- **Stateful systems are harder**: With stateless services, bugs can be fixed by restarting. With databases that remember forever, mistakes last forever
+- **Weak transaction properties**: Weak isolation levels (see Chapter 8) have confusing semantics
+- **Scalability pressures**: Many systems abandon transactions for better performance/scalability but get messier semantics
+- **Configuration complexity**: Hard to determine if it's safe to run at particular isolation level or replication configuration
+
+**Real-world problems:**
+
+- **Jepsen experiments**: Revealed stark discrepancies between claimed safety guarantees and actual behavior during network problems and crashes
+- **Application misuse**: Even when infrastructure is correct, applications often misuse database features (wrong isolation level, incorrect quorum configuration)
+- **Testing challenges**: Simple solutions appear correct under low concurrency without faults, but have subtle bugs under demanding circumstances
+
+### 7.2. Exactly-Once Execution of an Operation
+
+**In plain English:** Imagine paying for coffee, but your card reader freezes. Did the payment go through? If you retry, you might get charged twice. If you don't retry, you might not pay at all. The system needs to guarantee that whether you press "pay" once or ten times due to glitches, you're only charged once—this is exactly-once execution.
+
+**In technical terms:** When message processing fails, you can either give up (data loss) or retry. Retrying risks processing the same message twice if the first attempt actually succeeded but you didn't receive confirmation. Exactly-once (or effectively-once) semantics ensure the final effect is the same as if no faults occurred, even if operations were retried.
+
+**Why it matters:** Processing messages twice is a form of data corruption. Charging customers twice, incrementing counters twice, or sending duplicate notifications all violate correctness. Making operations naturally idempotent or implementing duplicate suppression is essential.
+
+<DiagramContainer title="The Retry Dilemma">
+  <Row gap="lg">
+    <Column gap="md">
+      <Box color={colors.red} size="sm">Problem: Ambiguous Result</Box>
+      <ProcessFlow
+        steps={[
+          { title: "Send Payment", description: "Request leaves client", color: colors.blue },
+          { title: "Process Payment", description: "Server charges card", color: colors.green },
+          { title: "Network Failure", description: "Response never arrives", color: colors.red },
+          { title: "Client Doesn't Know", description: "Success or failure?", color: colors.orange }
+        ]}
+        direction="vertical"
+      />
+    </Column>
+
+    <Column gap="md">
+      <Box color={colors.green} size="sm">Solution: Idempotent Operations</Box>
+      <ProcessFlow
+        steps={[
+          { title: "Generate Request ID", description: "UUID or hash", color: colors.blue },
+          { title: "Send with ID", description: "Include in request", color: colors.purple },
+          { title: "Server Deduplicates", description: "Check ID, process once", color: colors.green },
+          { title: "Safe to Retry", description: "Same ID = idempotent", color: colors.green }
+        ]}
+        direction="vertical"
+      />
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Approaches:**
+
+1. **Natural idempotence**: Some operations are inherently idempotent (setting a value, deleting by ID)
+
+2. **Maintaining metadata**: Track operation IDs that have updated values, ensuring duplicates are recognized
+
+3. **Fencing tokens**: Ensure proper ordering when failing over between nodes
+
+**Challenges:**
+
+- Requires careful design and implementation
+- Must maintain additional metadata
+- Needs to handle failover scenarios correctly
+- Application-specific logic often needed
+
+> **💡 Insight**
+>
+> One of the most effective approaches for exactly-once semantics is making operations idempotent—ensuring they have the same effect whether executed once or multiple times. However, making a non-naturally-idempotent operation idempotent requires effort: maintaining operation ID metadata and proper fencing during failover.
+
+### 7.3. Duplicate Suppression
+
+**In plain English:** TCP automatically removes duplicate packets on a single connection, but what happens when your database connection drops and reconnects? TCP's duplicate detection doesn't span connections. Similarly, what if the user's browser times out and they retry? Now you have duplicate requests at the application level that neither TCP nor the database can detect.
+
+**In technical terms:** Duplicate suppression occurs at many levels (TCP packet sequence numbers, transaction IDs, application request IDs), but each level has limited scope. TCP duplicate suppression only works within a single connection. Database transactions are tied to client connections. When connections fail and reconnect, you're outside the scope of these duplicate suppression mechanisms.
+
+**Why it matters:** Even with database transactions, you can't prevent duplicate execution without application-level duplicate detection. The standard bank transfer example (debit one account, credit another) is actually not correct without additional safeguards.
+
+**Example: Non-Idempotent Money Transfer**
+
+```sql
+BEGIN TRANSACTION;
+UPDATE accounts SET balance = balance + 11.00 WHERE account_id = 1234;
+UPDATE accounts SET balance = balance - 11.00 WHERE account_id = 4321;
+COMMIT;
+```
+
+**The problem:**
+
+<ProcessFlow
+  steps={[
+    { title: "Client Sends COMMIT", description: "Transaction submitted", color: colors.blue },
+    { title: "Database Commits", description: "Transaction executes", color: colors.green },
+    { title: "Network Timeout", description: "Response never arrives", color: colors.red },
+    { title: "Client Reconnects", description: "New TCP connection", color: colors.orange },
+    { title: "Client Retries", description: "Executes transaction again!", color: colors.red }
+  ]}
+  direction="horizontal"
+/>
+
+Result: $22 transferred instead of $11. Real banks don't work like this!
+
+**Even 2PC doesn't fully solve this:**
+
+Two-phase commit protocols allow transaction coordinators to reconnect after network faults to complete in-doubt transactions. But this still doesn't prevent duplicates from:
+
+- End-user device retries (browser "Submit form again?" warning)
+- Network timeouts between client and application server
+- Application server retries to database
+
+> **💡 Insight**
+>
+> Multiple layers of duplicate suppression exist (TCP, database transactions, stream processors), but none by itself provides end-to-end guarantees. Each layer helps reduce the probability of duplicates reaching higher levels, but the application must implement end-to-end duplicate suppression to guarantee correctness.
+
+### 7.4. The End-to-End Argument
+
+**In plain English:** It's like having locked doors throughout a building (good!) but still needing to secure the front entrance. Inner doors help, but only the front door provides end-to-end security. Similarly, TCP prevents duplicate packets, databases prevent duplicate transactions within a connection, but you still need application-level duplicate prevention for true end-to-end correctness.
+
+**In technical terms:** The end-to-end argument, articulated by Saltzer, Reed, and Clark in 1984, states: "The function in question can completely and correctly be implemented only with the knowledge and help of the application standing at the endpoints of the communication system." Lower-level mechanisms help but aren't sufficient by themselves.
+
+**Why it matters:** You cannot rely solely on infrastructure-level features for correctness. Applications must implement end-to-end measures like duplicate suppression, checksums, and encryption to ensure correctness across the entire system path.
+
+<DiagramContainer title="The End-to-End Argument">
+  <StackDiagram
+    title="Layers of Duplicate Suppression"
+    layers={[
+      {
+        label: "Application Layer",
+        color: colors.green,
+        items: ["Request IDs", "Idempotent operations", "Business logic deduplication"]
+      },
+      {
+        label: "Database Layer",
+        color: colors.blue,
+        items: ["Transaction boundaries", "Within-connection deduplication", "Uniqueness constraints"]
+      },
+      {
+        label: "Stream Processing Layer",
+        color: colors.purple,
+        items: ["Exactly-once semantics", "Message deduplication", "Checkpoint recovery"]
+      },
+      {
+        label: "Network Layer (TCP)",
+        color: colors.orange,
+        items: ["Packet sequence numbers", "Retransmission", "In-order delivery"]
+      }
+    ]}
+  />
+
+  <Box color={colors.slate} variant="subtle" size="sm">
+    Each layer provides partial guarantees; only end-to-end measures ensure correctness
+  </Box>
+</DiagramContainer>
+
+**Examples of end-to-end argument:**
+
+1. **Duplicate suppression**: TCP suppresses duplicate packets, databases deduplicate within transactions, but only end-to-end request IDs guarantee no duplicates from user
+
+2. **Data integrity**: Ethernet, TCP, and TLS have checksums detecting network corruption, but not corruption from software bugs or disk errors. Only end-to-end checksums catch all sources of corruption
+
+3. **Encryption**: WiFi password protects against WiFi snooping, TLS/SSL protects against network attackers, but only end-to-end encryption protects against compromised servers
+
+**Making application code reliable:**
+
+Just because an application uses serializable transactions doesn't guarantee freedom from data loss or corruption. The application itself needs end-to-end measures like duplicate suppression.
+
+**The challenge:**
+
+- Fault-tolerance mechanisms are hard to implement correctly
+- Low-level reliability (like TCP) works well, so high-level faults are rare (but still occur)
+- We haven't found the right abstraction to wrap high-level fault tolerance
+- Transactions help but aren't sufficient by themselves
+
+**Uniquely Identifying Requests:**
+
+To make requests idempotent through several network hops, you need end-to-end request identifiers:
+
+```sql
+-- Generate unique ID (UUID) and include in all request processing
+ALTER TABLE requests ADD UNIQUE (request_id);
+
+BEGIN TRANSACTION;
+
+INSERT INTO requests
+  (request_id, from_account, to_account, amount)
+  VALUES('0286FDB8-D7E1-423F-B40B-792B3608036C', 4321, 1234, 11.00);
+
+UPDATE accounts SET balance = balance + 11.00 WHERE account_id = 1234;
+UPDATE accounts SET balance = balance - 11.00 WHERE account_id = 4321;
+
+COMMIT;
+```
+
+**How it works:**
+
+- Generate UUID in client application (hidden form field or hash of form fields)
+- Pass request ID through entire system to database
+- Uniqueness constraint on `request_id` prevents duplicate execution
+- If duplicate attempted, `INSERT` fails and transaction aborts
+- `requests` table acts as event log for event sourcing or CDC
+
+> **💡 Insight**
+>
+> Low-level reliability features (TCP duplicate suppression, Ethernet checksums, WiFi encryption) cannot provide end-to-end features by themselves, but they're still useful since they reduce the probability of problems at higher levels. We just need to remember that low-level reliability is not sufficient to ensure end-to-end correctness.
+
+---
+
+## 8. Enforcing Constraints
+
+### 8.1. Uniqueness Constraints Require Consensus
+
+**In plain English:** Imagine two people trying to book the last seat on a flight at the same time. Someone needs to decide who got there first—you need consensus. The same applies to usernames, email addresses, account balances, or any resource where uniqueness matters. Without consensus, two conflicting operations might both succeed, violating the constraint.
+
+**In technical terms:** In a distributed setting, enforcing uniqueness constraints requires consensus: when several concurrent requests have the same value, the system must decide which operation is accepted and reject others as violations. This is typically achieved by making a single node the leader that decides on all requests for a particular value.
+
+**Why it matters:** Uniqueness constraints are fundamental to many applications (user registration, booking systems, inventory management), but they require coordination that can become a bottleneck. Understanding how to scale uniqueness checking is essential for building high-performance systems.
+
+<DiagramContainer title="Uniqueness Constraints Need Consensus">
+  <Row gap="lg">
+    <Column gap="md">
+      <Box color={colors.red} size="sm">Problem: Concurrent Writes</Box>
+      <Row gap="sm">
+        <Box color={colors.orange} size="sm">User A → username "alice"</Box>
+        <Box color={colors.orange} size="sm">User B → username "alice"</Box>
+      </Row>
+      <Box color={colors.red} variant="subtle" size="sm">
+        Without consensus: both might succeed!
+      </Box>
+    </Column>
+
+    <Column gap="md">
+      <Box color={colors.green} size="sm">Solution: Single Decision Maker</Box>
+      <ProcessFlow
+        steps={[
+          { title: "Requests Arrive", description: "Both want 'alice'", color: colors.orange },
+          { title: "Leader Decides", description: "Serializes requests", color: colors.blue },
+          { title: "First Wins", description: "User A gets 'alice'", color: colors.green },
+          { title: "Second Rejected", description: "User B: name taken", color: colors.red }
+        ]}
+        direction="vertical"
+      />
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Approaches:**
+
+1. **Single leader**: Make one node responsible for all decisions for a value
+   - Works fine if throughput is acceptable
+   - Funnels all requests through one node
+   - Subject to leader election if leader fails
+
+2. **Consensus algorithms**: Raft, Paxos handle leader election safely
+   - Prevent split brain scenarios
+   - Recover from leader failures
+   - Maintain consistency guarantees
+
+3. **Sharding by value**: Scale out by partitioning
+   - Route requests by hash of value (username, request ID, etc.)
+   - Each shard handles its own subset independently
+   - Increases throughput while maintaining per-shard uniqueness
+
+**What doesn't work:**
+
+- **Asynchronous multi-leader replication**: Different leaders might concurrently accept conflicting writes, violating uniqueness
+- **Eventually consistent systems**: Can't immediately reject violations without coordination
+
+**Other similar constraints:**
+
+The same techniques apply to:
+
+- Account balances never going negative
+- Not selling more items than warehouse stock
+- Preventing overlapping meeting room bookings
+- Ensuring sequential ID generation
+
+> **💡 Insight**
+>
+> If you want to immediately reject writes that would violate a constraint, synchronous coordination is unavoidable. However, as we'll see later, many applications can actually tolerate temporary constraint violations and fix them up later with compensating transactions.
+
+### 8.2. Uniqueness in Log-Based Messaging
+
+**In plain English:** Think of a log as a line of people at a ticket counter—everyone stands in order, and the ticket agent serves them one by one. The agent (stream processor) can definitively say who asked for tickets first and who gets them. Even if there's a dispute later about who was first, the written log record provides the indisputable truth.
+
+**In technical terms:** A shared log ensures all consumers see messages in the same order—a guarantee known as total order broadcast, which is formally equivalent to consensus. A stream processor consuming a log shard sequentially on a single thread can unambiguously and deterministically decide which of several conflicting operations came first.
+
+**Why it matters:** Log-based messaging provides the same consensus guarantees as traditional approaches but in a way that scales easily with throughput by increasing the number of shards, as each shard can be processed independently.
+
+**Example: Username Registration**
+
+<ProcessFlow
+  steps={[
+    { title: "Encode Requests", description: "Username requests → messages", color: colors.blue },
+    { title: "Shard by Hash", description: "hash(username) determines shard", color: colors.purple },
+    { title: "Sequential Processing", description: "Stream processor reads log order", color: colors.green },
+    { title: "Local State Check", description: "Is username taken?", color: colors.orange },
+    { title: "Emit Success/Reject", description: "Write to output stream", color: colors.green }
+  ]}
+  direction="horizontal"
+/>
+
+**Algorithm:**
+
+1. Every username request is encoded as a message and appended to a shard determined by `hash(username)`
+
+2. A stream processor sequentially reads requests in the log, using a local database to track which usernames are taken
+
+3. For every available username request, record the name as taken and emit a success message to an output stream
+
+4. For every taken username request, emit a rejection message to the output stream
+
+5. The client requesting the username watches the output stream and waits for success or rejection
+
+**Advantages:**
+
+- **Same as consensus**: This algorithm is the same as achieving consensus using a shared log (Chapter 10)
+- **Scales with throughput**: Increase number of shards to handle more requests
+- **Independent processing**: Each shard processed independently
+- **General applicability**: Works for many constraint types, not just uniqueness
+
+**Conflict definition:**
+
+The fundamental principle: **any writes that may conflict are routed to the same shard and processed sequentially**. The stream processor can use arbitrary logic to validate requests—the definition of a conflict depends on the application.
+
+> **💡 Insight**
+>
+> This approach works not only for uniqueness constraints but also for many other kinds of constraints. The key principle is routing potentially conflicting writes to the same shard for sequential processing. The stream processor can use arbitrary application-specific logic to validate each request.
+
+### 8.3. Multi-Shard Request Processing
+
+**In plain English:** Imagine transferring money from your checking account to your savings account, while the bank also deducts a fee. That's three accounts potentially on three different servers. Traditional databases would lock all three accounts during the transaction. Log-based systems can achieve the same correctness without locking, by carefully routing events through shards in the right order.
+
+**In technical terms:** Executing operations atomically across multiple shards while satisfying constraints is challenging. Traditional databases use atomic commit (2PC) across shards, forcing total ordering with respect to all other transactions. However, equivalent correctness can be achieved without cross-shard transactions using sharded logs and stream processors.
+
+**Why it matters:** Cross-shard coordination limits throughput since shards can no longer be processed independently. Log-based approaches can achieve the same correctness without traditional distributed transactions, enabling better performance and fault tolerance.
+
+<DiagramContainer title="Multi-Shard Payment Processing">
+  <Column gap="md">
+    <Box color={colors.blue}>Payment Request with Unique ID</Box>
+
+    <Arrow direction="down" label="Append to source account shard" />
+
+    <Group title="Source Account Processor" color={colors.purple}>
+      <Column gap="sm">
+        <Box color={colors.purple} size="sm">Check balance</Box>
+        <Box color={colors.purple} size="sm">Reserve payment</Box>
+        <Box color={colors.purple} size="sm">Emit events to 3 shards</Box>
+      </Column>
+    </Group>
+
+    <Row gap="md">
+      <Column gap="sm">
+        <Arrow direction="down" label="Outgoing payment" />
+        <Box color={colors.blue} size="sm">Source Account</Box>
+        <Box color={colors.slate} size="sm" variant="subtle">Deduct reserved amount</Box>
+      </Column>
+
+      <Column gap="sm">
+        <Arrow direction="down" label="Incoming payment" />
+        <Box color={colors.green} size="sm">Destination Account</Box>
+        <Box color={colors.slate} size="sm" variant="subtle">Credit amount</Box>
+      </Column>
+
+      <Column gap="sm">
+        <Arrow direction="down" label="Incoming fee" />
+        <Box color={colors.orange} size="sm">Fee Account</Box>
+        <Box color={colors.slate} size="sm" variant="subtle">Credit fee</Box>
+      </Column>
+    </Row>
+
+    <Box color={colors.green} variant="subtle">
+      All updates deduplicated by request ID, achieving exactly-once semantics
+    </Box>
+  </Column>
+</DiagramContainer>
+
+**How it works:**
+
+1. **Request to log**: Payment request with unique ID is appended to a log shard based on source account ID
+
+2. **Process at source**: Stream processor reads log, maintains state of source account and processed request IDs. When encountering new request:
+   - Check if source account has sufficient balance
+   - If yes, reserve payment amount locally
+   - Emit events to three log shards:
+     - Outgoing payment → source account shard (own input)
+     - Incoming payment → destination account shard
+     - Incoming payment → fee account shard
+   - Include original request ID in all emitted events
+
+3. **Complete at source**: When outgoing payment event returns to source processor:
+   - Recognize based on request ID
+   - Execute payment (deduct reserved amount)
+   - Ignore duplicates based on request ID
+
+4. **Process at destination/fee**: Independent processors for destination and fee accounts:
+   - Receive incoming payment events
+   - Update local state
+   - Deduplicate based on request ID
+
+**Key properties:**
+
+- **Three separate shards**: Accounts can be in same or different shards—doesn't matter
+- **Strict log order**: Events for any given account processed in log order
+- **At-least-once semantics**: Tolerate crashes with reprocessing
+- **Deterministic processing**: Same inputs always produce same decisions
+
+**Fault tolerance:**
+
+If source account processor crashes while processing payment:
+
+- Output messages may or may not have been emitted
+- After recovery, reprocesses same request (at-least-once)
+- Makes same decision (deterministic)
+- Emits same messages with same request ID
+- Downstream consumers ignore duplicates via request ID
+
+**Atomicity:**
+
+Comes not from transactions but from:
+
+- Writing initial request event to source account log is atomic
+- Once that one event is in the log, all downstream events will eventually be written
+- Possibly after crashes and with duplicates, but eventually consistent
+
+> **💡 Insight**
+>
+> By breaking down the multi-shard transaction into several differently sharded stages and using end-to-end request IDs, we achieve the same correctness property (every request applied exactly once to all accounts) even with faults, and without using an atomic commit protocol. This is more scalable and robust than traditional 2PC.
+
+---
+
+## 9. Timeliness and Integrity
+
+**In plain English:** There are two types of "being wrong" in data systems. Type 1: "Your Amazon order will arrive in 3 days" but the page takes 30 seconds to load, so you don't see that estimate for half a minute. That's annoying but temporary. Type 2: Your bank shows your account balance as $1,000 but a bug summed transactions incorrectly—you actually have $1,500. That's permanent corruption. The first is a timeliness problem, the second is an integrity problem.
+
+**In technical terms:** The term consistency conflates two different requirements: (1) Timeliness means users observe the system in an up-to-date state—weak or eventual consistency is a timeliness issue. (2) Integrity means absence of corruption—no data loss, no contradictory or false data. ACID transactions provide both, but dataflow systems can provide strong integrity guarantees without timeliness.
+
+**Why it matters:** Most applications can tolerate delays in seeing updates (timeliness violations) much better than data corruption (integrity violations). Understanding this distinction lets you build systems with strong integrity guarantees even when immediate consistency isn't feasible.
+
+<ComparisonTable
+  beforeTitle="Timeliness"
+  afterTitle="Integrity"
+  beforeColor={colors.orange}
+  afterColor={colors.red}
+  items={[
+    { label: "Definition", before: "Up-to-date observations", after: "Absence of corruption" },
+    { label: "CAP Theorem", before: "Consistency = linearizability", after: "Not addressed by CAP" },
+    { label: "When Violated", before: "Stale reads (temporary)", after: "Data loss or corruption (permanent)" },
+    { label: "Resolution", before: "Wait and retry → fixed", after: "Requires explicit checking & repair" },
+    { label: "ACID Property", before: "Consistency (linearizability)", after: "Atomicity, Durability" },
+    { label: "Slogan", before: "Eventual consistency", after: "Perpetual inconsistency" }
+  ]}
+/>
+
+**Example: Credit Card Statement**
+
+<DiagramContainer title="Timeliness vs Integrity in Banking">
+  <Row gap="lg">
+    <Column gap="md">
+      <Box color={colors.orange} size="sm">Timeliness Issue (OK)</Box>
+      <Box color={colors.orange} variant="subtle">
+        Transaction within last 24 hours doesn't appear yet
+      </Box>
+      <Box color={colors.green} variant="subtle" size="sm">
+        ✓ Expected: systems have lag
+        ✓ Will appear eventually
+        ✓ Annoying but not catastrophic
+      </Box>
+    </Column>
+
+    <Column gap="md">
+      <Box color={colors.red} size="sm">Integrity Issue (BAD)</Box>
+      <Box color={colors.red} variant="subtle">
+        Statement balance ≠ sum of transactions, or money disappears
+      </Box>
+      <Box color={colors.red} variant="subtle" size="sm">
+        ✗ Corruption of system integrity
+        ✗ Won't fix itself by waiting
+        ✗ Catastrophic for trust & legal reasons
+      </Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+> **💡 Insight**
+>
+> In slogan form: violations of timeliness are "eventual consistency," whereas violations of integrity are "perpetual inconsistency." In most applications, integrity is much more important than timeliness. Violations of timeliness can be annoying and confusing, but violations of integrity can be catastrophic.
+
+### 9.1. Correctness of Dataflow Systems
+
+**In plain English:** Traditional databases are like package deals—they give you both immediate updates (timeliness) and guaranteed correctness (integrity) bundled together. Dataflow systems unbundle these: you get strong integrity guarantees without paying for immediate timeliness. Users might need to wait a moment to see updates, but when they do see them, they're guaranteed to be correct.
+
+**In technical terms:** ACID transactions usually provide both timeliness (linearizability) and integrity (atomic commit). Event-based dataflow systems decouple these: they don't guarantee timeliness unless you explicitly build consumers that wait for messages, but they can maintain strong integrity through exactly-once semantics and deterministic processing.
+
+**Why it matters:** By decoupling timeliness and integrity, dataflow systems can achieve comparable correctness to ACID transactions with much better performance and operational robustness.
+
+**How dataflow systems maintain integrity:**
+
+1. **Exactly-once/effectively-once semantics**: Prevents data loss or duplication, preserving integrity
+
+2. **Deterministic derivation functions**: Same inputs always produce same outputs
+
+3. **Client-generated request IDs**: Enable end-to-end duplicate suppression and idempotence
+
+4. **Immutable messages**: Easier to recover from bugs by reprocessing
+
+5. **Single atomic write**: Write operation represented as single message that can be written atomically (event sourcing fits well)
+
+**Integrity without distributed transactions:**
+
+Dataflow systems achieve integrity through:
+
+- **Fault-tolerant message delivery**: Reliable log-based messaging
+- **Duplicate suppression**: Idempotent operations with request IDs
+- **Deterministic processing**: Pure functions with no side effects
+- **Reprocessable data**: Can rerun derivations from scratch
+
+These mechanisms are less expensive and more operationally robust than distributed transactions.
+
+> **💡 Insight**
+>
+> An interesting property of event-based dataflow systems is that they decouple timeliness and integrity. When processing event streams asynchronously, there's no guarantee of timeliness unless you explicitly wait for messages. However, integrity is central—exactly-once semantics is a mechanism for preserving integrity even without timeliness guarantees.
+
+### 9.2. Loosely Interpreted Constraints
+
+**In plain English:** Real businesses often break their own rules temporarily and fix them later. Airlines overbook flights expecting some no-shows. Warehouses oversell stock and apologize with discounts. Banks allow overdrafts and charge fees. Strict enforcement of constraints ("never overbook!") is often more restrictive than necessary. Many businesses prefer optimistically allowing violations and having processes to handle apologies and compensation.
+
+**In technical terms:** Many real applications have business requirements to allow violations of what seem like hard constraints. Enforcing uniqueness strictly requires consensus/coordination, but many business contexts find it acceptable to temporarily violate constraints and apply compensating transactions later (apologizing, refunding, providing alternatives).
+
+**Why it matters:** If compensating transactions are acceptable for your business, you can avoid the coordination bottleneck of strict constraint enforcement. Write operations can proceed optimistically, with validation happening after the fact but before expensive-to-undo actions.
+
+<DiagramContainer title="Real-World Constraint Violations">
+  <CardGrid columns={2} cards={[
+    {
+      title: "Warehouse Stock",
+      icon: "📦",
+      color: colors.blue,
+      description: "Overselling inventory",
+      items: [
+        "Customers order more than available",
+        "Order more stock from supplier",
+        "Apologize for delay, offer discount",
+        "Same as forklift accident recovery"
+      ]
+    },
+    {
+      title: "Airline Seats",
+      icon: "✈️",
+      color: colors.purple,
+      description: "Overbooking flights",
+      items: [
+        "Deliberately violate 'one person per seat'",
+        "Expect some passengers to no-show",
+        "Compensation when demand exceeds supply",
+        "Refunds, upgrades, alternative flights"
+      ]
+    },
+    {
+      title: "Bank Overdrafts",
+      icon: "💰",
+      color: colors.green,
+      description: "Negative balance allowed",
+      items: [
+        "Withdraw more than account balance",
+        "Charge overdraft fee",
+        "Request customer pay back",
+        "Limit daily withdrawals to bound risk"
+      ]
+    },
+    {
+      title: "Inter-Organization",
+      icon: "🏢",
+      color: colors.orange,
+      description: "Settlement processes",
+      items: [
+        "Inconsistencies inevitably arise",
+        "Correction mechanisms necessary",
+        "Payment settlement between banks",
+        "Reconciliation is normal business"
+      ]
+    }
+  ]} />
+</DiagramContainer>
+
+**Compensating transactions:**
+
+A compensating transaction is a change that corrects a previous mistake. Examples:
+
+- **Unsending email**: Can't undo, but can send follow-up correction
+- **Double charge**: Can refund one charge (cost is just processing fees and customer complaint)
+- **ATM cash**: Can't reclaim directly, but can send debt collectors for overdraft
+- **Flight oversold**: Offer refund, upgrade, or hotel for bumped passengers
+
+**Cost of apologies:**
+
+Whether the cost of apologies is acceptable is a business decision. If acceptable:
+
+- No need to check all constraints before writing data
+- Can proceed optimistically with writes
+- Validate constraints after the fact
+- Ensure validation happens before expensive-to-recover actions
+
+**Integrity vs. Timeliness:**
+
+These applications require integrity (don't lose reservations, don't lose money due to mismatched credits/debits), but they don't require timeliness on constraint enforcement. If you've sold more items than available, you can fix it later by apologizing.
+
+> **💡 Insight**
+>
+> In many business contexts, it's acceptable to temporarily violate a constraint and fix it up later by apologizing. This is similar to the conflict resolution approaches for multi-leader replication. The traditional model of checking all constraints before writing data is unnecessarily restrictive for many real-world applications.
+
+### 9.3. Coordination-Avoiding Data Systems
+
+**In plain English:** Imagine a large company where every decision requires a meeting with all departments. Progress would be glacial, and if one department is unavailable, everything stops. Now imagine departments work mostly independently, synchronizing only when truly necessary. That's the difference between coordination-heavy systems (distributed transactions) and coordination-avoiding systems (dataflow with loose constraints).
+
+**In technical terms:** Two key observations: (1) Dataflow systems can maintain integrity guarantees on derived data without atomic commit, linearizability, or synchronous cross-shard coordination, and (2) many applications are fine with loose constraints that may be temporarily violated and fixed later, as long as integrity is preserved. Together, these enable coordination-avoiding data systems.
+
+**Why it matters:** Systems that avoid coordination can achieve better performance and fault tolerance than those requiring synchronous coordination, while still maintaining strong integrity guarantees. This is especially valuable for geographically distributed deployments.
+
+<ComparisonTable
+  beforeTitle="Coordination-Heavy (2PC)"
+  afterTitle="Coordination-Avoiding (Dataflow)"
+  beforeColor={colors.red}
+  afterColor={colors.green}
+  items={[
+    { label: "Integrity", before: "Strong atomicity guarantees", after: "Strong through idempotence" },
+    { label: "Timeliness", before: "Immediate (linearizable)", after: "Eventual (asynchronous)" },
+    { label: "Coordination", before: "Synchronous cross-shard", after: "Asynchronous log processing" },
+    { label: "Fault Tolerance", before: "Fails if any participant fails", after: "Isolated failures, eventual recovery" },
+    { label: "Performance", before: "Coordination overhead", after: "High throughput" },
+    { label: "Geo-Distribution", before: "Impractical (latency)", after: "Multi-datacenter replication" }
+  ]}
+/>
+
+**Example architecture:**
+
+A coordination-avoiding system can:
+
+- **Operate across multiple datacenters**: Each datacenter in multi-leader configuration
+- **Asynchronously replicate between regions**: No synchronous cross-region coordination required
+- **Continue during regional outages**: Any datacenter can operate independently
+- **Weak timeliness guarantees**: Not linearizable without coordination
+- **Strong integrity guarantees**: Through deterministic processing and idempotence
+
+**Where coordination is still needed:**
+
+- **Strict constraints**: When immediate rejection of violations is required
+- **Unrecoverable operations**: Before actions from which recovery is impossible
+- **Small scope**: Use serializable transactions where they work well
+- **Specific features**: Only parts of the application that truly need it
+
+> **💡 Insight**
+>
+> Coordination-avoiding data systems have a lot of appeal: they can achieve better performance and fault tolerance than systems requiring synchronous coordination. Serializable transactions are still useful for maintaining derived state, but can be run at a small scope where they work well. Heterogeneous distributed transactions (XA) are not required.
+
+**Trade-off perspective:**
+
+Coordination and constraints reduce the number of apologies due to inconsistencies, but potentially reduce performance and availability, thus potentially increasing apologies due to outages. You cannot reduce apologies to zero, but you can find the best trade-off: the sweet spot where there are neither too many inconsistencies nor too many availability problems.
+
+---
+
+## 10. Trust, But Verify
+
+### 10.1. Maintaining Integrity in the Face of Software Bugs
+
+**In plain English:** Imagine trusting a calculator to always give correct answers, then discovering it sometimes makes rounding errors. Even well-tested databases have bugs. MySQL has failed to maintain uniqueness constraints, PostgreSQL's serializability has exhibited write skew anomalies. If mature, battle-tested databases have bugs, applications built on them certainly do. You need ways to detect corruption, not just assume it never happens.
+
+**In technical terms:** Despite hardware failures being rare and software being carefully designed and tested, bugs still exist. Past versions of major databases (MySQL, PostgreSQL) have had bugs violating fundamental guarantees. Application code has even more bugs, and most applications don't correctly use the database features that preserve integrity (foreign keys, uniqueness constraints).
+
+**Why it matters:** Data corruption is inevitable over time at large enough scale. You need ways to detect corruption so you can fix it and track down error sources. Auditing—checking data integrity—shouldn't be just for financial applications; it's important for all systems that care about correctness.
+
+**Real-world database bugs:**
+
+- **MySQL**: Past versions failed to correctly maintain uniqueness constraints
+- **PostgreSQL**: Serializable isolation level exhibited write skew anomalies in some versions
+- Both are robust, well-regarded databases with extensive testing and review
+- Less mature software likely has more issues
+
+**Application code is worse:**
+
+- Most applications receive far less review and testing than databases
+- Many don't use available integrity features (foreign key constraints, uniqueness constraints)
+- Often use database features incorrectly (unsafe isolation levels, improper transaction boundaries)
+
+**ACID consistency assumption:**
+
+ACID consistency assumes:
+- Database starts in a consistent state
+- Transaction transforms one consistent state to another
+- Relies on transactions being bug-free
+
+But if applications use databases incorrectly (weak isolation levels unsafely, improper constraints), integrity cannot be guaranteed.
+
+> **💡 Insight**
+>
+> Consistency in the ACID sense is based on the idea that the database starts in a consistent state and transactions transform it from one consistent state to another. However, this notion only makes sense if you assume transactions are free from bugs. If applications use databases incorrectly, integrity cannot be guaranteed.
+
+### 10.2. Don't Just Blindly Trust What They Promise
+
+**In plain English:** Don't assume your backup works—actually test restoring from it before you desperately need it during a disaster. Don't assume your data is uncorrupted—periodically check it. Large-scale storage systems don't fully trust disks; they constantly read files, compare replicas, and move data between disks to catch corruption early.
+
+**In technical terms:** With both hardware and software not always living up to ideals, data corruption is inevitable eventually. Checking data integrity (auditing) is essential. Mature systems actively verify correctness rather than blindly trusting components. Storage systems like HDFS and S3 run background processes continually reading files, comparing replicas, and moving data to mitigate silent corruption.
+
+**Why it matters:** If you want to ensure your data is still there, you have to actually read it and check. Most of the time it will be fine, but if it isn't, you want to find out sooner rather than later. Don't blindly trust—verify.
+
+**Examples of verification in practice:**
+
+**Large-scale storage systems:**
+
+- **HDFS**: Background processes continually read files, compare replicas, move files between disks
+- **Amazon S3**: Similar verification processes
+- **Philosophy**: Don't fully trust disks, but assume they work correctly most of the time
+- **Proactive**: Find corruption before it causes problems
+
+**Backup systems:**
+
+- **Test restores regularly**: Don't wait for disaster to discover backup is broken
+- **Verification processes**: Automated testing of backup integrity
+- **Recovery drills**: Practice restore procedures
+
+<DiagramContainer title="Trust, But Verify Approach">
+  <ProcessFlow
+    steps={[
+      { title: "Store Data", description: "Write to persistent storage", color: colors.blue },
+      { title: "Background Verification", description: "Read back and check continuously", color: colors.purple },
+      { title: "Compare Replicas", description: "Detect silent corruption", color: colors.orange },
+      { title: "Proactive Repair", description: "Fix before it causes issues", color: colors.green }
+    ]}
+    direction="horizontal"
+  />
+</DiagramContainer>
+
+**System model assumptions:**
+
+Traditional system models (Chapter 10) take a binary approach:
+
+- Some things can happen (processes crash, network delays)
+- Other things can never happen (disk data not lost after fsync, memory not corrupted, CPU instructions correct)
+
+Reality is more nuanced—it's about probabilities:
+
+- Some things are more likely
+- Other things are less likely
+- Question: Do violations happen often enough that we encounter them in practice?
+
+**At scale, rare events happen:**
+
+If you operate at large enough scale, even very unlikely things do occur. Data can become corrupted:
+
+- In memory (hardware faults)
+- On disk (bit rot, firmware bugs)
+- On the network (cosmic rays, electromagnetic interference)
+- Through software bugs (the most common source)
+
+> **💡 Insight**
+>
+> Systems like HDFS and S3 still assume that disks work correctly most of the time—which is reasonable—but not the same as assuming they always work correctly. However, not many systems currently have this "trust, but verify" approach of continually auditing themselves. In the future, we may see more self-validating systems that continually check their own integrity rather than relying on blind trust.
+
+### 10.3. Designing for Auditability
+
+**In plain English:** Imagine trying to figure out why your bank account is wrong by looking at the current balance—impossible! But if you have a ledger showing every transaction with timestamps and reasons, you can trace exactly what happened. Event-based systems provide this ledger: every state change is an immutable event, making it possible to audit, replay, and verify that the system did what it was supposed to do.
+
+**In technical terms:** If transactions mutate objects in databases, it's difficult to determine after the fact what the transaction meant. Even with transaction logs, the insertions/updates/deletions don't necessarily show why mutations were performed. Event-based systems provide better auditability: user input is represented as immutable events, and state updates are deterministic derivations from those events.
+
+**Why it matters:** Being explicit about dataflow makes data provenance much clearer, enabling integrity checking, debugging, and compliance. You can rerun derivations to verify correctness or even time-travel debug to understand why the system made specific decisions.
+
+**Comparison: Mutable Transactions vs. Immutable Events**
+
+<ComparisonTable
+  beforeTitle="Mutable Database Transactions"
+  afterTitle="Event-Based Systems"
+  beforeColor={colors.orange}
+  afterColor={colors.green}
+  items={[
+    { label: "User Action", before: "Invocation is transient, can't reproduce", after: "Immutable event, permanently recorded" },
+    { label: "State Updates", before: "Multiple tables mutated in place", after: "Derived deterministically from events" },
+    { label: "Reasoning", before: "Hard to determine why changes happened", after: "Explicit dataflow shows provenance" },
+    { label: "Verification", before: "Can't recompute from scratch", after: "Can rerun same events, verify output" },
+    { label: "Debugging", before: "State at time of bug is lost", after: "Time-travel debug: replay events" }
+  ]}
+/>
+
+**Benefits of event-based auditability:**
+
+1. **Deterministic derivations**: Running same events through same code produces same output
+
+2. **Hash verification**: Can check event log storage hasn't been corrupted using cryptographic hashes
+
+3. **Redundant derivation**: Can rerun batch/stream processors to verify derived state matches expectations
+
+4. **Parallel verification**: Run redundant derivation in parallel with production to detect discrepancies
+
+5. **Time-travel debugging**: Reproduce exact circumstances leading to unexpected events
+
+**Example audit workflow:**
+
+<ProcessFlow
+  steps={[
+    { title: "Suspicious Result", description: "Detect anomaly in system", color: colors.red },
+    { title: "Check Event Log", description: "Find original events", color: colors.blue },
+    { title: "Verify Hashes", description: "Ensure log not corrupted", color: colors.purple },
+    { title: "Rerun Derivation", description: "Process events again", color: colors.orange },
+    { title: "Compare Results", description: "Same or different?", color: colors.green }
+  ]}
+  direction="horizontal"
+/>
+
+**Better than traditional databases:**
+
+Traditional transaction logs show low-level mutations (insert, update, delete) but not:
+
+- Why the application decided to perform those mutations
+- What user action triggered the transaction
+- What the application state was when the decision was made
+
+Event-based systems preserve this context, making debugging and auditing much more feasible.
+
+> **💡 Insight**
+>
+> Being explicit about dataflow makes the provenance of data much clearer, which makes integrity checking much more feasible. A deterministic and well-defined dataflow also makes it easier to debug and trace execution to determine why the system did something—a kind of time-travel debugging capability.
+
+### 10.4. Tools for Auditable Data Systems
+
+**In plain English:** Blockchains like Bitcoin got one thing very right: they provide tamper-proof logs where everyone can verify that the log hasn't been altered. You don't need cryptocurrency to benefit from these ideas—cryptographic tools like Merkle trees and signed logs can make regular applications more auditable, helping detect bugs and corruption before they cause serious damage.
+
+**In technical terms:** Currently, few data systems make auditability a top-level concern. Some applications implement custom audit mechanisms, but guaranteeing integrity of both audit logs and database state is difficult. Cryptographic techniques from blockchains (Merkle trees, signed logs, Byzantine fault tolerance) can be adapted for general-purpose data systems to provide stronger auditability.
+
+**Why it matters:** Auditing tools increase confidence about system correctness, allowing you to move faster. Like automated testing, auditing increases the chances that bugs are found quickly, reducing the risk that changes or new technologies cause damage.
+
+<DiagramContainer title="Tools for Auditable Systems">
+  <CardGrid columns={2} cards={[
+    {
+      title: "Blockchains",
+      icon: "⛓️",
+      color: colors.orange,
+      description: "Byzantine fault tolerant",
+      items: [
+        "Shared append-only logs",
+        "Cryptographic consistency checks",
+        "Consensus despite corrupted nodes",
+        "Too high overhead for most apps"
+      ]
+    },
+    {
+      title: "Merkle Trees",
+      icon: "🌳",
+      color: colors.blue,
+      description: "Efficient integrity proofs",
+      items: [
+        "Trees of hashes",
+        "Efficiently prove record appears in dataset",
+        "Used in Git, Bitcoin, Certificate Transparency",
+        "Lower overhead than full blockchain"
+      ]
+    },
+    {
+      title: "Certificate Transparency",
+      icon: "🔒",
+      color: colors.green,
+      description: "Cryptographically verified logs",
+      items: [
+        "Append-only logs + Merkle trees",
+        "Check validity of TLS/SSL certificates",
+        "Single leader per log (no consensus needed)",
+        "Detects certificate authority misbehavior"
+      ]
+    },
+    {
+      title: "Hardware Security Modules",
+      icon: "🔐",
+      color: colors.purple,
+      description: "Tamper-proof signing",
+      items: [
+        "Periodically sign transaction logs",
+        "Makes logs tamper-proof",
+        "Doesn't guarantee right transactions logged",
+        "Prevents post-hoc alteration"
+      ]
+    }
+  ]} />
+</DiagramContainer>
+
+**Blockchain technologies relevant to general systems:**
+
+1. **Merkle trees**: Trees of cryptographic hashes that efficiently prove a record appears in a dataset
+
+2. **Append-only logs**: Immutable event logs that can't be altered without detection
+
+3. **Cryptographic signatures**: Sign log segments to prove they haven't been tampered with
+
+4. **Byzantine fault tolerance**: Continue working correctly even if some nodes have corrupted data
+
+**Example: Certificate Transparency**
+
+Certificate Transparency uses cryptographic techniques to audit TLS/SSL certificates:
+
+- Maintain cryptographically verified append-only logs
+- Use Merkle trees to efficiently prove certificate issuance
+- Avoid consensus protocol by having single leader per log
+- Detect and prevent misissued certificates from certificate authorities
+
+**Future direction:**
+
+Integrity-checking and auditing algorithms might become more widely used in general data systems:
+
+- Some work needed to make them scalable
+- Keep performance penalty low
+- Adapt techniques from distributed ledgers and certificate transparency
+- Apply to general-purpose applications, not just financial systems
+
+> **💡 Insight**
+>
+> At present, not many data systems make auditability a top-level concern. However, cryptographic tools from blockchains can be used in lightweight contexts. Integrity-checking algorithms like those in certificate transparency and distributed ledgers might become more widely used in data systems in the future, though work is needed to make them equally scalable.
+
+---
+
+## 11. Summary
+
+In this chapter, we explored new approaches to designing data systems based on stream processing ideas, bringing together the themes of reliability, scalability, and maintainability:
+
+**Data Integration (Section 2):**
+
+- No single tool efficiently serves all use cases
+- Applications must compose specialized software to accomplish goals
+- Solve integration through batch processing and event streams
+- Designate systems of record; derive other data through transformations
+- Asynchronous, loosely coupled derivations prevent faults from spreading
+
+**Dataflow Philosophy:**
+
+- Express data processing as transformations from one dataset to another
+- When processing changes, rerun transformation code on whole input to rederive output
+- Similar to what databases do internally, but unbundled into separate components
+- Easier to evolve: fix code and reprocess data to recover from errors
+
+**Observing Derived State (Section 6):**
+
+- Derived state can be observed by downstream consumers
+- Can extend dataflow to end-user devices
+- Build UIs that dynamically update to reflect data changes
+- Continue working offline with eventual synchronization
+
+**Correctness Without Coordination (Sections 7-9):**
+
+- Strong integrity guarantees achievable with asynchronous event processing
+- Use end-to-end request IDs to make operations idempotent
+- Check constraints asynchronously
+- Clients can wait for checks or proceed optimistically (risking apology)
+- Much more scalable and robust than distributed transactions
+- Fits with how many business processes work in practice
+
+**Coordination-Avoiding Systems:**
+
+- Maintain integrity without atomic commit, linearizability, or cross-shard coordination
+- Many applications fine with loose constraints temporarily violated and fixed later
+- Achieve better performance and fault tolerance
+- Work in geographically distributed scenarios and with faults
+
+**Trust, But Verify (Section 10):**
+
+- Auditing verifies integrity and detects corruption
+- Cryptographic techniques from blockchains applicable to general systems
+- Event-based systems provide better auditability than traditional mutations
+- Increases confidence, enabling faster iteration
+
+> **💡 Insight**
+>
+> The key philosophical shift is treating data systems as dataflow pipelines where state changes flow through transformations, rather than as databases that are passively read and written. This enables building systems that maintain strong integrity guarantees while being more scalable, fault-tolerant, and evolvable than traditional approaches.
+
+**The future of data systems:**
+
+By structuring applications around dataflow and checking constraints asynchronously, we can create systems that:
+
+- Maintain integrity without coordination
+- Perform well even geographically distributed
+- Remain correct in the presence of faults
+- Can be audited and verified end-to-end
+- Enable faster, safer evolution
+
+This philosophy represents the convergence of ideas from databases, stream processing, distributed systems, and functional programming, pointing toward how we'll build reliable systems in the coming decades.
+
+---
+
+**Previous:** [Chapter 12](chapter12-stream-processing.mdx) | **Next:** [Chapter 14](chapter14-ethics.md)

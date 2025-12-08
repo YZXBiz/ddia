@@ -1,0 +1,1177 @@
+---
+sidebar_position: 5
+title: "Chapter 10. Consistency and Consensus"
+description: "Exploring consistency models and consensus algorithms in distributed systems"
+---
+
+import { Box, Arrow, Row, Column, Group, DiagramContainer, ProcessFlow, TreeDiagram, CardGrid, ConnectionDiagram, StackDiagram, ComparisonTable, StateFlow, colors } from '@site/src/components/diagrams/Diagram';
+
+# Chapter 10. Consistency and Consensus
+
+> An ancient adage warns, "Never go to sea with two chronometers; take one or three."
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [Linearizability](#2-linearizability)
+   - 2.1. [What Makes a System Linearizable?](#21-what-makes-a-system-linearizable)
+   - 2.2. [Linearizability Versus Serializability](#22-linearizability-versus-serializability)
+   - 2.3. [Relying on Linearizability](#23-relying-on-linearizability)
+   - 2.4. [Implementing Linearizable Systems](#24-implementing-linearizable-systems)
+   - 2.5. [The Cost of Linearizability](#25-the-cost-of-linearizability)
+3. [ID Generators and Logical Clocks](#3-id-generators-and-logical-clocks)
+   - 3.1. [Logical Clocks](#31-logical-clocks)
+   - 3.2. [Linearizable ID Generators](#32-linearizable-id-generators)
+4. [Consensus](#4-consensus)
+   - 4.1. [The Impossibility of Consensus](#41-the-impossibility-of-consensus)
+   - 4.2. [The Many Faces of Consensus](#42-the-many-faces-of-consensus)
+   - 4.3. [Consensus in Practice](#43-consensus-in-practice)
+   - 4.4. [Coordination Services](#44-coordination-services)
+5. [Summary](#5-summary)
+
+---
+
+## 1. Introduction
+
+**In plain English:** When you replicate data across multiple machines for fault tolerance, those copies can easily get out of sync. There are two philosophical approaches: either expose this complexity to developers (eventual consistency) or hide it behind strong guarantees (strong consistency). This chapter is about the strong consistency approach.
+
+**In technical terms:** Lots of things can go wrong in distributed systems. If we want a service to continue working correctly despite those things going wrong, we need to find ways of tolerating faults. One of the best tools we have is replication—but having multiple copies of data opens up the risk of inconsistencies.
+
+**Why it matters:** Strong consistency makes distributed systems behave like single-node systems, dramatically simplifying application logic. However, it comes with performance costs and availability trade-offs that you must understand to make informed architectural decisions.
+
+At a high level, there are two competing philosophies for dealing with replication issues:
+
+<CardGrid
+  cards={[
+    {
+      title: 'Eventual Consistency',
+      icon: '🔄',
+      color: colors.orange,
+      description: 'Applications must handle inconsistencies and conflicts explicitly',
+      items: [
+        'Multi-leader and leaderless replication',
+        'Higher availability and performance',
+        'More complex application logic',
+        'Works with offline-capable apps'
+      ]
+    },
+    {
+      title: 'Strong Consistency',
+      icon: '🔒',
+      color: colors.blue,
+      description: 'System behaves as if it were single-node; hides replication complexity',
+      items: [
+        'Single-leader or consensus-based',
+        'Simpler application development',
+        'Performance cost and reduced availability',
+        'Requires reliable network communication'
+      ]
+    }
+  ]}
+  columns={2}
+/>
+
+> **💡 Insight**
+>
+> The choice between eventual and strong consistency is fundamentally about where you place complexity: in the infrastructure (consensus algorithms) or in the application code (conflict resolution). Neither is inherently better—it depends on your requirements, network reliability, and whether your application can tolerate stale reads.
+
+In this chapter we will dive deeper into the strongly consistent approach, looking at three areas:
+
+1. **Linearizability** — A precise definition of "strong consistency" that makes replicated systems behave like single-node systems
+2. **ID Generators and Timestamps** — How to generate unique, correctly ordered identifiers in distributed systems
+3. **Consensus Algorithms** — How distributed systems can achieve linearizability while remaining fault-tolerant
+
+Along the way, we will see that there are fundamental limits on what is possible in a distributed system.
+
+---
+
+## 2. Linearizability
+
+**In plain English:** Imagine a database that looks like a single magic box, even though it's actually many machines. When one person writes something, everyone else immediately sees that new value. No stale reads, no confusion. That's linearizability.
+
+**In technical terms:** Linearizability (also known as atomic consistency, strong consistency, immediate consistency, or external consistency) is the idea of making a system appear as if there were only one copy of the data, and all operations on it are atomic. With this guarantee, even though there may be multiple replicas in reality, the application does not need to worry about them.
+
+**Why it matters:** In a linearizable system, as soon as one client successfully completes a write, all clients reading from the database must be able to see the value just written. This recency guarantee prevents confusing anomalies where users see data go "back in time."
+
+### Example: Nonlinearizable Sports Website
+
+<DiagramContainer title="Nonlinearizable System Causing Confusion">
+  <ProcessFlow
+    steps={[
+      {
+        title: 'Game ends, final score announced',
+        description: 'Score becomes official: Warriors 103, Lakers 101',
+        color: colors.slate
+      },
+      {
+        title: 'Aaliyah refreshes (hits Replica A)',
+        description: 'Sees final score, excitedly tells Bryce',
+        color: colors.green
+      },
+      {
+        title: 'Bryce refreshes (hits Replica B)',
+        description: 'Sees game still ongoing—Replica B is lagging!',
+        color: colors.red
+      },
+      {
+        title: 'Linearizability violation',
+        description: 'Bryce knows he reloaded AFTER Aaliyah, but sees older data',
+        color: colors.red
+      }
+    ]}
+  />
+</DiagramContainer>
+
+If Aaliyah and Bryce had hit reload at the same time, different results would be unsurprising. However, **Bryce knows** that he hit reload after hearing Aaliyah exclaim the final score, and therefore he expects his query result to be at least as recent as Aaliyah's. The fact that his query returned a stale result is a violation of linearizability.
+
+### 2.1. What Makes a System Linearizable?
+
+Let's look at three clients concurrently reading and writing the same object `x` (could be one key in a key-value store, one row in a database, etc.).
+
+<DiagramContainer title="Linearizability Basics">
+  <Row gap="lg">
+    <Column>
+      <Box color={colors.blue}>Client A</Box>
+      <Box color={colors.green} variant="outlined">read(x) ⇒ 0</Box>
+      <Box color={colors.green} variant="outlined">read(x) ⇒ 1</Box>
+    </Column>
+    <Column>
+      <Box color={colors.purple}>Client B</Box>
+      <Box color={colors.purple} variant="outlined">read(x) ⇒ 1</Box>
+      <Box color={colors.red} variant="outlined">read(x) ⇒ 2 ❌</Box>
+    </Column>
+    <Column>
+      <Box color={colors.orange}>Client C</Box>
+      <Box color={colors.orange} variant="outlined">write(x, 1)</Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Key operations:**
+
+- `read(x) ⇒ v` — Client reads register x, database returns value v
+- `write(x, v) ⇒ r` — Client sets register x to value v, database returns response r (ok or error)
+- `cas(x, vold, vnew) ⇒ r` — Atomic compare-and-set: only updates if current value equals `vold`
+
+**Linearizability rules:**
+
+1. **Before write completes:** Reads return old value (0)
+2. **After write completes:** All reads must return new value (1)
+3. **During write (concurrent):** Reads may return either old or new value
+4. **Once any read returns new value:** All subsequent reads (on any client) must also return new value
+
+> **💡 Insight**
+>
+> Think of linearizability as requiring an atomic "flip" moment during every write. Even if the write operation takes time to process, there must be some instant when the value switches from old to new. After that instant, no client can ever see the old value again—even if the write operation hasn't finished confirming to the writer.
+
+The final read by Client B (returning 2) is **not linearizable** because Client A already read value 4 before B's read started. This is the same Aaliyah-and-Bryce situation: if one client sees a newer value, all subsequent reads must see at least that new value.
+
+### 2.2. Linearizability Versus Serializability
+
+**These are easily confused but quite different!**
+
+<ComparisonTable
+  items={[
+    {
+      label: 'Scope',
+      before: 'Transactions across multiple objects',
+      after: 'Single object reads and writes'
+    },
+    {
+      label: 'Guarantee',
+      before: 'Transactions behave as if executed serially',
+      after: 'Operations appear to take effect instantaneously'
+    },
+    {
+      label: 'Order requirement',
+      before: 'Any serial order is acceptable',
+      after: 'Must respect real-time order'
+    },
+    {
+      label: 'Prevents',
+      before: 'Write skew, phantoms (multi-object anomalies)',
+      after: 'Stale reads (single-object recency)'
+    },
+    {
+      label: 'Example system',
+      before: 'Serializable Snapshot Isolation (SSI)',
+      after: 'Single-leader replication on the leader'
+    }
+  ]}
+  beforeTitle="Serializability"
+  afterTitle="Linearizability"
+  beforeColor={colors.purple}
+  afterColor={colors.blue}
+/>
+
+**In plain English:** Serializability is about multi-object transactions behaving as if they ran one-at-a-time (even if they actually overlapped). Linearizability is about single-object operations appearing instantaneous and respecting real-time order.
+
+**Combining both:** A database may provide both serializability and linearizability—this combination is known as **strict serializability** or **strong one-copy serializability (strong-1SR)**. Single-node databases typically provide this. With distributed databases, it requires expensive coordination.
+
+### 2.3. Relying on Linearizability
+
+In what circumstances is linearizability useful?
+
+<CardGrid
+  cards={[
+    {
+      title: 'Locking and Leader Election',
+      icon: '🔐',
+      color: colors.blue,
+      description: 'Ensuring only one node becomes the leader',
+      items: [
+        'Must be linearizable—no split brain allowed',
+        'ZooKeeper and etcd use consensus for this',
+        'Implements distributed leases',
+        'Fencing tokens prevent zombie leaders'
+      ]
+    },
+    {
+      title: 'Constraints and Uniqueness',
+      icon: '🎯',
+      color: colors.green,
+      description: 'Enforcing uniqueness constraints',
+      items: [
+        'Username must be unique',
+        'File path must be unique',
+        'Similar to acquiring a "lock" on the username',
+        'Requires atomic compare-and-set'
+      ]
+    },
+    {
+      title: 'Cross-Channel Timing',
+      icon: '📡',
+      color: colors.orange,
+      description: 'Multiple communication channels between components',
+      items: [
+        'Web upload → queue → transcoder reads from storage',
+        'If storage is non-linearizable, race condition possible',
+        'Transcoder might fetch old version or nothing',
+        'Push notifications + data fetch have same issue'
+      ]
+    }
+  ]}
+/>
+
+**Example: Video transcoding race condition**
+
+<DiagramContainer title="Cross-Channel Race Condition">
+  <ProcessFlow
+    steps={[
+      {
+        title: 'User uploads video.mp4',
+        description: 'Web server writes to file storage',
+        color: colors.blue
+      },
+      {
+        title: 'Web server enqueues "transcode video.mp4"',
+        description: 'Message goes to queue (faster than storage replication)',
+        color: colors.green
+      },
+      {
+        title: 'Transcoder receives message',
+        description: 'Fetches video.mp4 from file storage',
+        color: colors.orange
+      },
+      {
+        title: 'Storage returns old version or 404',
+        description: 'Replication not yet complete—inconsistency!',
+        color: colors.red
+      }
+    ]}
+  />
+</DiagramContainer>
+
+This problem arises because there are **two different communication channels** between the web server and transcoder: the file storage and the message queue. Without linearizability, race conditions between these channels are possible.
+
+### 2.4. Implementing Linearizable Systems
+
+Let's revisit replication methods from Chapter 6 and compare their linearizability:
+
+<ComparisonTable
+  items={[
+    {
+      label: 'Single-leader replication',
+      before: 'Potentially linearizable',
+      after: 'Only if all reads/writes go to leader; follower reads are stale; failover can violate linearizability'
+    },
+    {
+      label: 'Consensus algorithms',
+      before: 'Linearizable',
+      after: 'Designed to prevent split brain; but reads without leader check may be stale'
+    },
+    {
+      label: 'Multi-leader replication',
+      before: 'Not linearizable',
+      after: 'Concurrent writes on multiple nodes create conflicts; asynchronous replication'
+    },
+    {
+      label: 'Leaderless (Dynamo-style)',
+      before: 'Probably not linearizable',
+      after: 'Even with quorums—LWW clocks violate it; race conditions with variable network delays'
+    }
+  ]}
+  beforeTitle="Replication Method"
+  afterTitle="Linearizability"
+  beforeColor={colors.slate}
+  afterColor={colors.blue}
+/>
+
+#### Linearizability and Quorums
+
+Intuitively, quorum reads and writes (w + r > n) seem like they should be linearizable. However, **they are not**:
+
+<DiagramContainer title="Nonlinearizable Execution Despite Quorum">
+  <Row gap="lg">
+    <Column align="center">
+      <Box color={colors.slate} size="sm">Replica 1</Box>
+      <Box color={colors.slate} size="sm">Replica 2</Box>
+      <Box color={colors.slate} size="sm">Replica 3</Box>
+    </Column>
+    <Arrow direction="right" label="Writer: x=1" />
+    <Column align="center">
+      <Box color={colors.green} size="sm">x=1 ✓</Box>
+      <Box color={colors.green} size="sm">x=1 ✓</Box>
+      <Box color={colors.orange} size="sm">x=0 (slow)</Box>
+    </Column>
+    <Arrow direction="right" />
+    <Column align="center">
+      <Box color={colors.blue}>Client A reads</Box>
+      <Box color={colors.slate} variant="subtle">Quorum: Replica 1,2</Box>
+      <Box color={colors.green} variant="outlined">Returns x=1 ✓</Box>
+    </Column>
+  </Row>
+  <Row gap="lg">
+    <Column align="center">
+      <Box color={colors.purple}>Client B reads</Box>
+      <Box color={colors.slate} variant="subtle">Quorum: Replica 2,3</Box>
+      <Box color={colors.red} variant="outlined">Returns x=0 ❌</Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+The quorum condition is met (w + r > n), but this execution is **not linearizable**: B's request begins after A's completes, but B returns the old value while A returns the new value.
+
+**To make Dynamo-style quorums linearizable** (at significant performance cost):
+- Readers must perform **synchronous read repair** before returning
+- Writers must read latest state from quorum to fetch the latest timestamp
+- Even then, compare-and-set cannot be implemented (requires consensus)
+
+> **💡 Insight**
+>
+> It is safest to assume that a leaderless system with Dynamo-style replication does not provide linearizability, even with quorum reads and writes.
+
+### 2.5. The Cost of Linearizability
+
+Consider a multi-region deployment with a network partition between regions:
+
+<DiagramContainer title="Network Partition: Linearizability vs. Availability">
+  <Row gap="lg">
+    <Column>
+      <Group title="West Region" color={colors.blue}>
+        <Box color={colors.blue}>Leader</Box>
+        <Box color={colors.slate} variant="outlined">Clients can write</Box>
+      </Group>
+    </Column>
+    <Box color={colors.red} variant="filled">❌ NETWORK PARTITION ❌</Box>
+    <Column>
+      <Group title="East Region" color={colors.orange}>
+        <Box color={colors.orange}>Follower</Box>
+        <Box color={colors.red} variant="outlined">Clients cannot write!</Box>
+      </Group>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**With single-leader replication:**
+- Clients in the follower region cannot make writes (unavailable)
+- Linearizable reads also unavailable (must contact leader)
+- Only clients in the leader region can continue working normally
+
+**With multi-leader replication:**
+- Both regions can accept writes (available)
+- Writes are queued and exchanged when network recovers
+- But this is **not linearizable**
+
+#### The CAP Theorem
+
+**In plain English:** When your network is broken, you must choose: either maintain consistency (linearizability) but become unavailable in some regions, or remain available everywhere but give up consistency.
+
+**More precisely:** The CAP theorem observes that if your application requires linearizability, and some replicas are disconnected due to a network problem, then those replicas cannot process requests (they become unavailable). This choice is sometimes known as **CP (consistent under partitions)**.
+
+If your application does not require linearizability, then each replica can process requests independently even when disconnected (**AP: available under partitions**).
+
+**Why CAP is unhelpful:**
+
+<ComparisonTable
+  items={[
+    {
+      label: 'Network partitions',
+      before: 'Presented as a "choice"',
+      after: 'Actually inevitable—they will happen'
+    },
+    {
+      label: 'Better phrasing',
+      before: '"Pick 2 out of 3: C, A, P"',
+      after: '"Consistent OR Available when Partitioned"'
+    },
+    {
+      label: 'Scope',
+      before: 'Only linearizability and partitions',
+      after: 'Ignores network delays, dead nodes, other trade-offs'
+    },
+    {
+      label: 'Practical value',
+      before: 'Historically influential (triggered NoSQL)',
+      after: 'Little help for designing real systems'
+    }
+  ]}
+  beforeTitle="CAP Misconception"
+  afterTitle="Reality"
+  beforeColor={colors.red}
+  afterColor={colors.green}
+/>
+
+> **💡 Insight**
+>
+> CAP theorem has been superseded by more precise impossibility results. It's of mostly historical interest today. The real trade-off is not about network partitions (which are inevitable) but about choosing between linearizability and low latency.
+
+#### Linearizability and Network Delays
+
+Surprisingly, **even RAM on modern multi-core CPUs is not linearizable**! If a thread on one CPU core writes to a memory address, and a thread on another core reads the same address shortly after, it may not see the new value (unless a memory barrier is used).
+
+**Why?** Every CPU core has its own cache and store buffer. Accessing cache is much faster than main memory, so this is essential for performance. But there are now multiple copies of data, asynchronously updated—linearizability is lost.
+
+**Key insight:** The reason for dropping linearizability is **performance**, not fault tolerance.
+
+The same is true of distributed databases that choose not to provide linearizable guarantees: they do so primarily to increase performance, not for fault tolerance.
+
+**Attiya and Welch proved:** If you want linearizability, the response time of read and write requests is at least proportional to the uncertainty of delays in the network. In a network with highly variable delays (like most computer networks), linearizable reads and writes will inevitably be slow.
+
+A faster algorithm for linearizability **does not exist**, but weaker consistency models can be much faster.
+
+---
+
+## 3. ID Generators and Logical Clocks
+
+**In plain English:** In a single-node database, you can generate unique IDs by just incrementing a counter (1, 2, 3, ...). This is fast, compact, and the order tells you which records were created first. But in a distributed system, this simple approach doesn't work—you need more sophisticated techniques.
+
+**In technical terms:** Many applications need to assign unique IDs to database records when they are created. In single-node databases, an auto-incrementing integer is common (64-bit or 32-bit). Another advantage is that the order of IDs reflects the order records were created.
+
+**Why it matters:** Incorrectly ordered IDs can cause serious bugs, like showing a private photo to unauthorized viewers because its timestamp was assigned out of order relative to an account permission change.
+
+### Single-Node ID Generator Problems
+
+A single-node ID generator is linearizable (each fetch-and-add operation atomically increments and returns the counter), but has issues:
+
+<CardGrid
+  cards={[
+    {
+      title: 'Single Point of Failure',
+      icon: '❌',
+      color: colors.red,
+      description: 'If the node fails, no IDs can be generated until recovery'
+    },
+    {
+      title: 'Geographic Latency',
+      icon: '🌍',
+      color: colors.orange,
+      description: 'Creating a record in another region requires round-trip to ID generator'
+    },
+    {
+      title: 'Bottleneck',
+      icon: '🚦',
+      color: colors.purple,
+      description: 'Single node can become overwhelmed with high write throughput'
+    }
+  ]}
+/>
+
+### Alternative ID Generation Schemes
+
+<ComparisonTable
+  items={[
+    {
+      label: 'Sharded assignment',
+      before: 'Node A: even numbers, Node B: odd numbers',
+      after: 'Compact but loses ordering (ID 17 might be earlier than ID 16)'
+    },
+    {
+      label: 'Preallocated blocks',
+      before: 'Node A: 1-1000, Node B: 1001-2000',
+      after: 'Reduces contention but loses ordering'
+    },
+    {
+      label: 'Random UUIDs (v4)',
+      before: '128-bit random number',
+      after: 'No coordination needed but random order, larger size'
+    },
+    {
+      label: 'Timestamp-based',
+      before: 'Wall-clock time + shard number + sequence',
+      after: 'Approximate ordering but clock skew causes issues (Version 7 UUIDs, Snowflake, MongoDB ObjectID)'
+    }
+  ]}
+  beforeTitle="Scheme"
+  afterTitle="Trade-offs"
+  beforeColor={colors.blue}
+  afterColor={colors.slate}
+/>
+
+All these schemes generate unique IDs but have **much weaker ordering guarantees** than single-node auto-increment. As discussed in Chapter 9, wall-clock timestamps can provide at best approximate ordering due to clock skew and jumps.
+
+### 3.1. Logical Clocks
+
+**In plain English:** Instead of measuring time in seconds, a logical clock measures time in events. It doesn't tell you "what time is it?" but it can tell you "which happened first?"
+
+**In technical terms:** While a physical clock is a hardware device that counts seconds (or milliseconds, microseconds), a logical clock is an algorithm that counts events that have occurred. Timestamps from a logical clock can be compared to determine ordering.
+
+**Requirements for a logical clock:**
+
+1. **Compact** — A few bytes in size
+2. **Unique** — Every timestamp is different
+3. **Totally ordered** — Any two timestamps can be compared
+4. **Causally consistent** — If operation A happened before B, then A's timestamp < B's timestamp
+
+#### Lamport Timestamps
+
+**How it works:**
+
+<DiagramContainer title="Lamport Clock Example">
+  <ProcessFlow
+    steps={[
+      {
+        title: 'Each node has unique ID and counter',
+        description: 'Counter starts at 0, increments on every operation',
+        color: colors.blue
+      },
+      {
+        title: 'Timestamp = (counter, node_id)',
+        description: 'Example: (5, "alice"), (12, "bob")',
+        color: colors.green
+      },
+      {
+        title: 'On local operation: increment counter',
+        description: 'Attach new counter value to operation',
+        color: colors.orange
+      },
+      {
+        title: 'On receiving message: max(local, received) + 1',
+        description: 'Ensures causal consistency across nodes',
+        color: colors.purple
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Comparing Lamport timestamps:**
+
+```
+(2, "bryce") > (1, "aaliyah")   // Compare counter first
+(1, "caleb") > (1, "aaliyah")   // If equal, compare node ID
+```
+
+> **💡 Insight**
+>
+> Lamport timestamps capture the happens-before relationship: if A happened before B (in the causal sense), then A's timestamp will be less than B's. But the reverse is not true—if A's timestamp is less than B's, A might have happened before B, or they might be concurrent.
+
+#### Hybrid Logical Clocks
+
+Hybrid logical clocks combine physical time-of-day clocks with Lamport clock ordering:
+
+<CardGrid
+  cards={[
+    {
+      title: 'Physical Time Component',
+      color: colors.blue,
+      items: [
+        'Counts microseconds like a normal clock',
+        'Can find events by date/time',
+        'Slowly drifts with underlying physical clock'
+      ]
+    },
+    {
+      title: 'Logical Counter',
+      color: colors.green,
+      items: [
+        'Increments on every timestamp generation',
+        'Moves forward if remote timestamp is greater',
+        'Ensures monotonic progress even if clock jumps backward'
+      ]
+    }
+  ]}
+  columns={2}
+/>
+
+**Benefits:**
+- Treats timestamp almost like conventional time-of-day
+- Ordering is consistent with happens-before relation
+- Doesn't depend on special hardware (atomic clocks, GPS)
+- Only requires roughly synchronized clocks
+
+**Used by:** CockroachDB, Apache Cassandra (in some modes)
+
+#### Lamport/Hybrid Clocks vs. Vector Clocks
+
+- **Lamport/Hybrid clocks:** Provide total order but can't detect concurrency
+- **Vector clocks:** Can detect when events are concurrent but timestamps are much larger (one integer per node)
+
+Use vector clocks when you need to detect concurrent writes (as in conflict resolution). Use Lamport/hybrid clocks for transaction IDs in snapshot isolation.
+
+### 3.2. Linearizable ID Generators
+
+Although Lamport and hybrid logical clocks provide useful ordering, that ordering is **weaker than linearizable**:
+
+- **Linearizability:** If request A completed before request B began, then B must have higher ID (even if A and B never communicated)
+- **Lamport clocks:** Can only ensure greater timestamps than what a node has **seen**, not what it hasn't seen
+
+**Example: Privacy violation with non-linearizable IDs**
+
+<DiagramContainer title="Non-Linearizable ID Generator Problem">
+  <ProcessFlow
+    steps={[
+      {
+        title: 'User A: Set account to private (timestamp: 105)',
+        description: 'Request goes to accounts database',
+        color: colors.blue
+      },
+      {
+        title: 'User A: Upload embarrassing photo (timestamp: 104)',
+        description: 'Photos database counter was slightly behind—assigns earlier timestamp!',
+        color: colors.red
+      },
+      {
+        title: 'Viewer reads with snapshot timestamp 104.5',
+        description: 'Sees photo (104 < 104.5) but not privacy setting (105 > 104.5)',
+        color: colors.red
+      },
+      {
+        title: 'Result: Unauthorized viewer sees private photo',
+        description: 'Linearizable ID generator would have prevented this',
+        color: colors.red
+      }
+    ]}
+  />
+</DiagramContainer>
+
+#### Implementing a Linearizable ID Generator
+
+**Simplest approach: Use a single node**
+
+<DiagramContainer title="Single-Node ID Generator with Fault Tolerance">
+  <Row gap="lg">
+    <Column>
+      <Box color={colors.blue}>ID Generator (Leader)</Box>
+      <Box color={colors.green} variant="outlined">Counter: 1,247,832</Box>
+      <Box color={colors.slate} variant="subtle">Persisted + Replicated</Box>
+    </Column>
+    <Arrow direction="right" label="Failover" />
+    <Column>
+      <Box color={colors.orange}>Replica (Follower)</Box>
+      <Box color={colors.orange} variant="outlined">Ready to take over</Box>
+    </Column>
+  </Row>
+</DiagramContainer>
+
+**Optimizations:**
+- **Batch allocation:** Write blocks of IDs (1-1000, then 1001-2000) to reduce disk writes
+- Some IDs will be skipped if the node crashes, but no duplicates or out-of-order IDs
+- Single node can handle large throughput since its job is simple
+
+**You cannot easily shard** the ID generator—multiple shards independently handing out IDs can't guarantee linearizable ordering.
+
+**Alternative: Google Spanner approach**
+- Use physical clocks that return uncertainty interval (not single timestamp)
+- Wait for uncertainty interval duration to elapse before returning
+- Ensures if one request completes before another begins, the later has greater timestamp
+- Requires tightly synchronized clocks (atomic clocks, GPS)
+
+---
+
+## 4. Consensus
+
+**In plain English:** Consensus is about getting all the nodes in a distributed system to agree on something—who is the leader, what order events happened in, whether to commit a transaction. It's one of the most important and difficult problems in distributed computing.
+
+**In technical terms:** Consensus is the fundamental problem underlying many distributed systems challenges: leader election, atomic commit, linearizable operations, and more. The best-known consensus algorithms are Viewstamped Replication, Paxos, Raft, and Zab.
+
+**Why it matters:** Consensus algorithms enable automatic failover, preventing split brain while ensuring no committed data is lost. They're the foundation of coordination services like ZooKeeper and etcd, which in turn are used by countless distributed systems.
+
+We have seen several examples of things that are easy with a single node but hard when you want fault tolerance:
+
+<CardGrid
+  cards={[
+    {
+      title: 'Leader Failover',
+      icon: '👑',
+      color: colors.blue,
+      description: 'Single leader is simple, but how to fail over safely without split brain?'
+    },
+    {
+      title: 'Linearizable ID Generator',
+      icon: '🔢',
+      color: colors.green,
+      description: 'Counter with fetch-and-add on one node, but what if it crashes?'
+    },
+    {
+      title: 'Compare-and-Set',
+      icon: '⚛️',
+      color: colors.orange,
+      description: 'Useful for locks and leases, trivial on one node, hard to make fault-tolerant'
+    }
+  ]}
+/>
+
+**All of these are instances of consensus.**
+
+### 4.1. The Impossibility of Consensus
+
+**The FLP result** (Fischer, Lynch, Paterson) proves that there is no algorithm that is always able to reach consensus if there is a risk that a node may crash.
+
+**How can consensus algorithms exist?**
+
+The FLP result doesn't say we can never reach consensus—only that we can't **guarantee** that a consensus algorithm will always terminate. The proof assumes:
+
+- **Deterministic algorithm** in the asynchronous system model
+- **No clocks or timeouts**
+
+**Ways around the impossibility:**
+
+1. **Use timeouts** to suspect crashed nodes (even if suspicion is sometimes wrong)
+2. **Use random numbers** (randomized algorithms)
+
+> **💡 Insight**
+>
+> Although FLP proves theoretical impossibility, distributed systems can usually achieve consensus in practice by using timeouts and failure detectors. The FLP result is important theoretically but doesn't prevent building real consensus systems.
+
+### 4.2. The Many Faces of Consensus
+
+Consensus can be expressed in several different ways—and surprisingly, **these are all equivalent**:
+
+<ComparisonTable
+  items={[
+    {
+      label: 'Single-value consensus',
+      before: 'Decide on one value (e.g., who is the leader)',
+      after: 'Similar to atomic compare-and-set'
+    },
+    {
+      label: 'Shared logs (total order broadcast)',
+      before: 'Agree on order of log entries',
+      after: 'Used for state machine replication, event sourcing'
+    },
+    {
+      label: 'Atomic commitment',
+      before: 'All nodes commit or all abort a transaction',
+      after: 'Two-phase commit but fault-tolerant'
+    }
+  ]}
+  beforeTitle="Problem"
+  afterTitle="Use Case"
+  beforeColor={colors.blue}
+  afterColor={colors.green}
+/>
+
+If you have an algorithm that solves one of these problems, you can convert it into a solution for any of the others!
+
+#### Single-Value Consensus
+
+**Formal properties:**
+
+<CardGrid
+  cards={[
+    {
+      title: 'Uniform Agreement',
+      color: colors.blue,
+      description: 'No two nodes decide differently'
+    },
+    {
+      title: 'Integrity',
+      color: colors.green,
+      description: 'Once decided, cannot change mind'
+    },
+    {
+      title: 'Validity',
+      color: colors.orange,
+      description: 'If node decides v, then v was proposed by some node'
+    },
+    {
+      title: 'Termination',
+      color: colors.purple,
+      description: 'Every non-crashed node eventually decides'
+    }
+  ]}
+  columns={2}
+/>
+
+The first three are **safety properties** (bad things don't happen). Termination is a **liveness property** (good things eventually happen).
+
+**Example uses:**
+- Multiple nodes race to become leader → consensus decides which wins
+- Multiple people book the last airplane seat → consensus decides which succeeds
+
+#### Shared Logs (Total Order Broadcast)
+
+**In plain English:** A shared log is like a notebook that everyone can write in, but once something is written, it's permanent and everyone sees the same sequence of entries in the same order.
+
+**Properties:**
+
+<DiagramContainer title="Shared Log Properties">
+  <ProcessFlow
+    steps={[
+      {
+        title: 'Eventual Append',
+        description: 'If a node requests value to be added, it eventually reads it back (unless it crashes)',
+        color: colors.blue
+      },
+      {
+        title: 'Reliable Delivery',
+        description: 'If one node reads a log entry, all nodes eventually read it',
+        color: colors.green
+      },
+      {
+        title: 'Append-Only',
+        description: 'Entries are immutable; new entries only added at the end',
+        color: colors.orange
+      },
+      {
+        title: 'Agreement',
+        description: 'All nodes read the same entries in the same order',
+        color: colors.purple
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Implementing consensus from shared log:**
+- Every node that wants to propose a value requests it to be added to the log
+- Whichever value appears **first** in the log is the decided value
+- Since all nodes read the same order, they all agree
+
+**Implementing shared log from consensus:**
+- For every log slot, run a consensus instance to decide what goes in that slot
+- When consensus decides for a slot, append it to the log
+- If a value wasn't chosen, retry by proposing it for a later slot
+
+#### Atomic Commitment
+
+**Properties (similar to consensus but with key difference):**
+
+- **Uniform agreement:** No two nodes decide differently (commit or abort)
+- **Integrity:** Cannot change decision once made
+- **Validity:** If decides commit, all nodes voted commit; if any voted abort, must abort
+- **Non-triviality:** If all vote commit and no timeouts, must commit (can't always abort)
+- **Termination:** Every non-crashed node eventually decides
+
+**Key difference from consensus:** With consensus, any proposed value is acceptable. With atomic commit, must abort if any participant voted abort.
+
+**Implementing from consensus:**
+1. Every node sends its vote (commit/abort) to all others
+2. Nodes that receive "commit" from all propose "commit" to consensus
+3. Nodes that receive "abort" or timeout propose "abort"
+4. Consensus decides; all nodes commit or abort accordingly
+
+### 4.3. Consensus in Practice
+
+Most consensus systems provide **shared logs** (total order broadcast):
+
+- **Raft, Viewstamped Replication, Zab:** Shared logs directly
+- **Paxos:** Single-value consensus, but Multi-Paxos provides shared log
+- **Used by:** ZooKeeper (Zab), etcd (Raft), Consul (Raft)
+
+#### Using Shared Logs
+
+<CardGrid
+  cards={[
+    {
+      title: 'State Machine Replication',
+      icon: '🔄',
+      color: colors.blue,
+      description: 'Every log entry = write to database; replicas process same writes in same order → consistent state'
+    },
+    {
+      title: 'Serializable Transactions',
+      icon: '🔒',
+      color: colors.green,
+      description: 'Every log entry = transaction as stored procedure; all nodes execute in same order → serializable'
+    },
+    {
+      title: 'Derive Other Consensus',
+      icon: '🔀',
+      color: colors.orange,
+      description: 'CAS: decide first value in log; Fetch-and-add: sum of log entries; Fencing tokens: sequence number'
+    }
+  ]}
+/>
+
+#### From Single-Leader Replication to Consensus
+
+**Challenge:** Single-leader is easy but how to provide fault tolerance through automatic failover?
+
+**Solution: Epochs and two rounds of voting**
+
+<DiagramContainer title="Consensus Algorithm Structure">
+  <ProcessFlow
+    steps={[
+      {
+        title: 'Epoch Numbers',
+        description: 'Each leader election gets new epoch (term/view/ballot number)',
+        color: colors.blue
+      },
+      {
+        title: 'Vote 1: Elect Leader',
+        description: 'Nodes vote for new leader; requires quorum',
+        color: colors.green
+      },
+      {
+        title: 'Vote 2: Append Log Entry',
+        description: 'Leader proposes entry; requires quorum vote',
+        color: colors.orange
+      },
+      {
+        title: 'Quorum Overlap',
+        description: 'Same node participates in both votes → ensures no higher-epoch leader exists',
+        color: colors.purple
+      }
+    ]}
+  />
+</DiagramContainer>
+
+**Key properties:**
+
+- Within each epoch, leader is unique
+- Higher epoch prevails in conflicts
+- Before appending, leader checks no higher epoch exists (via quorum vote)
+- Two rounds of voting look like 2PC but very different: consensus only needs quorum (not all nodes) and any node can start election
+
+**Subtleties:**
+
+- **New leader catching up:** Raft requires new leader to have up-to-date log; Paxos allows any node but requires catching up first
+- **Linearizable reads:** Must go through quorum vote (or lease-based optimization)
+- **Reconfiguration:** Can add/remove nodes dynamically (useful for multi-region expansion)
+
+> **💡 Insight**
+>
+> Consensus algorithms are essentially "single-leader replication done right"—with automatic leader election, no split brain possible, and no committed data lost during failover. The complexity comes from handling all the edge cases correctly.
+
+#### Pros and Cons of Consensus
+
+**Advantages:**
+- Automatic failover without data loss
+- Prevents split brain
+- Ensures linearizability
+- Battle-tested algorithms with formal proofs
+
+**Disadvantages:**
+
+<CardGrid
+  cards={[
+    {
+      title: 'Requires Strict Majority',
+      icon: '📊',
+      color: colors.red,
+      description: '3 nodes for 1 failure, 5 nodes for 2 failures; cannot scale throughput by adding nodes'
+    },
+    {
+      title: 'Quorum Communication',
+      icon: '🌐',
+      color: colors.orange,
+      description: 'Every operation needs majority response; slow across geographic regions'
+    },
+    {
+      title: 'Timeout Sensitivity',
+      icon: '⏱️',
+      color: colors.purple,
+      description: 'Variable network delays make timeouts hard to tune; too large = slow recovery; too small = unnecessary elections'
+    },
+    {
+      title: 'Edge Cases',
+      icon: '⚠️',
+      color: colors.slate,
+      description: 'Raft has issues with unreliable network links causing continuous leadership churn'
+    }
+  ]}
+  columns={2}
+/>
+
+For systems that want high availability but don't want the cost of consensus, the alternative is **weaker consistency models** (leaderless or multi-leader replication).
+
+### 4.4. Coordination Services
+
+**In plain English:** Coordination services like ZooKeeper and etcd are specialized databases designed to help distributed systems coordinate with each other—not for storing your application data, but for storing tiny amounts of critical coordination metadata.
+
+**Examples:** ZooKeeper, etcd, Consul
+
+**Why not a regular database?** Coordination services combine consensus with features specifically useful for distributed coordination:
+
+<CardGrid
+  cards={[
+    {
+      title: 'Locks and Leases',
+      icon: '🔐',
+      color: colors.blue,
+      description: 'Atomic CAS for distributed locks; only one node acquires lease'
+    },
+    {
+      title: 'Fencing Support',
+      icon: '🛡️',
+      color: colors.green,
+      description: 'Monotonically increasing IDs (zxid, cversion) prevent zombie processes'
+    },
+    {
+      title: 'Failure Detection',
+      icon: '💓',
+      color: colors.orange,
+      description: 'Heartbeats and session timeouts; ephemeral nodes disappear when client dies'
+    },
+    {
+      title: 'Change Notifications',
+      icon: '🔔',
+      color: colors.purple,
+      description: 'Clients subscribe to key changes; no need to poll'
+    }
+  ]}
+  columns={2}
+/>
+
+#### Common Use Cases
+
+<ComparisonTable
+  items={[
+    {
+      label: 'Managing Configuration',
+      before: 'Store config as key-value pairs',
+      after: 'Processes load on startup + subscribe to changes'
+    },
+    {
+      label: 'Leader Election',
+      before: 'Several instances need to pick one leader',
+      after: 'Use CAS to acquire lease; ephemeral node for failure detection'
+    },
+    {
+      label: 'Allocating Work',
+      before: 'Decide which shard assigned to which node',
+      after: 'Atomic operations + notifications enable automatic rebalancing'
+    },
+    {
+      label: 'Service Discovery',
+      before: 'Find IP addresses of services',
+      after: 'Services register on startup; clients subscribe; often overkill (DNS works too)'
+    }
+  ]}
+  beforeTitle="Use Case"
+  afterTitle="How It Works"
+  beforeColor={colors.blue}
+  afterColor={colors.green}
+/>
+
+**Design characteristics:**
+
+- Hold small amounts of data (fits in memory)
+- Data is replicated to 3-5 nodes using consensus
+- Fixed set of nodes regardless of application cluster size
+- Slow-changing data (changes on timescale of minutes/hours)
+- For fast-changing state, use conventional databases instead
+
+**Service discovery note:** Using consensus for service discovery is often overkill. DNS-based service discovery with caching is usually sufficient since linearizability isn't needed for finding services.
+
+**ZooKeeper observers:** Read-only replicas that don't participate in voting; provide high read throughput and availability for non-linearizable reads (useful for service discovery).
+
+---
+
+## 5. Summary
+
+In this chapter we examined strong consistency in fault-tolerant systems: what it is and how to achieve it.
+
+**Linearizability:**
+
+<DiagramContainer title="Linearizability Properties">
+  <Row gap="lg">
+    <Box color={colors.blue}>Appears as single copy</Box>
+    <Arrow direction="right" />
+    <Box color={colors.green}>All operations atomic</Box>
+    <Arrow direction="right" />
+    <Box color={colors.orange}>Recency guarantee</Box>
+  </Row>
+</DiagramContainer>
+
+- Makes replicated data appear as a single copy with atomic operations
+- Useful for avoiding race conditions (e.g., uniqueness constraints, leader election)
+- Has downsides: slow, especially with large network delays
+- Many replication algorithms don't provide it (including Dynamo-style quorums)
+
+**ID Generators and Logical Clocks:**
+
+- Single-node auto-increment is linearizable but not fault-tolerant
+- Distributed ID schemes (UUIDs, timestamp-based) don't guarantee linearizable ordering
+- **Lamport clocks** provide causally consistent ordering without linearizability
+- **Hybrid logical clocks** combine physical time with causal ordering
+- **Linearizable ID generators** require single-node with replication or Spanner-style synchronized clocks
+
+**Consensus:**
+
+A wide range of problems are equivalent to consensus:
+
+<CardGrid
+  cards={[
+    {
+      title: 'Compare-and-Set',
+      color: colors.blue,
+      description: 'Atomically decide whether to update based on current value'
+    },
+    {
+      title: 'Locks and Leases',
+      color: colors.green,
+      description: 'Decide which client acquires the lock'
+    },
+    {
+      title: 'Uniqueness Constraints',
+      color: colors.orange,
+      description: 'Decide which transaction succeeds when creating conflicting records'
+    },
+    {
+      title: 'Shared Logs',
+      color: colors.purple,
+      description: 'Decide order of log entries (total order broadcast)'
+    },
+    {
+      title: 'Atomic Commit',
+      color: colors.pink,
+      description: 'All nodes decide same outcome for distributed transaction'
+    },
+    {
+      title: 'Fetch-and-Add',
+      color: colors.cyan,
+      description: 'Decide order of counter increments (consensus number = 2)'
+    }
+  ]}
+  columns={3}
+/>
+
+All are straightforward on a single node, but challenging to make fault-tolerant in a distributed setting.
+
+**Consensus algorithms:**
+
+- **Raft, Paxos, Viewstamped Replication, Zab** — Widely used, battle-tested algorithms
+- Essentially single-leader replication with automatic leader election and failover
+- Ensure no committed writes lost and no split brain
+- Every write and linearizable read requires quorum vote
+- **ZooKeeper, etcd, Consul** built on consensus; provide locks, leases, failure detection, notifications
+
+> **💡 Insight**
+>
+> Consensus is not always the right tool. For systems that don't need strong consistency, weaker models (leaderless, multi-leader) offer better availability and performance. The decision comes down to your application requirements: do you need linearizability, or can you tolerate eventual consistency?
+
+**When not to use consensus:**
+
+- Strong consistency not needed
+- High availability more important than consistency
+- Latency-sensitive applications
+- Wide-area networks with variable delays
+
+For such cases, leaderless or multi-leader replication with weaker consistency models is often more appropriate. The logical clocks we discussed (Lamport, hybrid) are helpful in that context.
+
+Consensus algorithms are complicated and subtle, but they are supported by a rich body of theory developed since the 1980s. This theory makes it possible to build systems that tolerate all the faults discussed in Chapter 9 while ensuring data is not corrupted.
+
+---
+
+**Previous:** [Chapter 9](chapter09-distributed-systems.mdx) | **Next:** [Chapter 11](../part3/chapter11-batch-processing.mdx)
