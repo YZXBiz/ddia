@@ -48,11 +48,23 @@ import { Box, Arrow, Row, Column, Group, DiagramContainer, ProcessFlow, TreeDiag
 
 ## 1. Introduction
 
-**In plain English:** Think of batch processing like doing laundry. Instead of washing each shirt individually as it gets dirty (that would be exhausting!), you wait until you have a full load, then process everything at once. Batch processing works the same way with data—you collect a bunch of it, then process it all together.
+**In plain English:**
+- Think of batch processing like doing laundry
+- Instead of washing each shirt individually (exhausting!)
+- You wait until you have a full load
+- Then process everything at once
+- Same with data—collect it, process together
 
-**In technical terms:** Batch processing takes a set of input data (which is read-only), and produces output data (which is generated from scratch every time the job runs). Unlike online transactions, batch jobs don't mutate data—they derive new outputs from existing inputs.
+**In technical terms:**
+- Batch processing takes a set of input data (read-only)
+- Produces output data (generated from scratch every run)
+- Unlike online transactions, batch jobs don't mutate data
+- They derive new outputs from existing inputs
 
-**Why it matters:** If you introduce a bug and the output is wrong, you can simply roll back to a previous version of the code and rerun the job. This "human fault tolerance" enables faster feature development because mistakes aren't irreversible.
+**Why it matters:**
+- Bug in the output? Roll back code, rerun the job
+- This "human fault tolerance" enables faster development
+- Mistakes aren't irreversible
 
 ### 1.1. Online vs. Batch vs. Stream
 
@@ -119,11 +131,17 @@ import { Box, Arrow, Row, Column, Group, DiagramContainer, ProcessFlow, TreeDiag
 
 ### 1.2. Why Batch Processing Matters
 
-Batch processing offers unique advantages that make it a fundamental building block for reliable systems:
+**Batch processing offers unique advantages:**
+- A fundamental building block for reliable systems
+- Enables patterns impossible in online systems
 
 > **💡 Insight**
 >
-> The key property of batch processing is **immutability**: inputs are never modified. This seemingly simple constraint has profound implications. If something goes wrong, you can always rerun the job to produce correct output. The same input files can be used by multiple jobs for different purposes. And you can compare outputs across job runs to detect anomalies.
+> The key property of batch processing is **immutability**: inputs are never modified. This seemingly simple constraint has profound implications:
+>
+> - Something goes wrong? Rerun the job to produce correct output
+> - Same input files can be used by multiple jobs for different purposes
+> - Compare outputs across job runs to detect anomalies
 
 **Benefits of batch processing:**
 
@@ -139,7 +157,9 @@ Batch processing offers unique advantages that make it a fundamental building bl
 
 ## 2. Batch Processing with Unix Tools
 
-Before diving into distributed systems, let's understand batch processing fundamentals using tools you already have: Unix commands.
+**Before distributed systems, let's understand batch processing with Unix:**
+- Tools you already have
+- Same patterns scale to massive systems
 
 ### 2.1. Simple Log Analysis
 
@@ -242,7 +262,9 @@ Both approaches work, but the execution models differ fundamentally:
 
 ## 3. Batch Processing in Distributed Systems
 
-A distributed batch processing framework is essentially a **distributed operating system**. Just as your laptop has storage, a scheduler, and programs connected by pipes, distributed frameworks have:
+**A distributed batch framework is a distributed operating system:**
+- Just as your laptop has storage, scheduler, programs connected by pipes
+- Distributed frameworks have the same components—at scale
 
 <DiagramContainer title="SINGLE MACHINE vs. DISTRIBUTED BATCH SYSTEM">
   <Row gap={60} align="start">
@@ -272,7 +294,11 @@ A distributed batch processing framework is essentially a **distributed operatin
 
 ### 3.1. Distributed Filesystems
 
-**In plain English:** Think of a distributed filesystem like a library system with multiple branches. Books (data blocks) are stored across different branches (machines), and there's a central catalog (metadata service) that knows where everything is. If one branch burns down, copies exist at other branches.
+**In plain English:**
+- Think of a distributed filesystem like a library with multiple branches
+- Books (data blocks) are stored across different branches (machines)
+- There's a central catalog (metadata service) that knows where everything is
+- If one branch burns down, copies exist at other branches
 
 **Key components:**
 
@@ -324,11 +350,19 @@ A distributed batch processing framework is essentially a **distributed operatin
 
 > **💡 Insight**
 >
-> DFS blocks are much larger than local filesystem blocks (128 MB vs 4 KB) because the overhead of tracking each block scales with the number of blocks. At petabyte scale, millions of 4 KB blocks would overwhelm the metadata service. Large blocks also amortize network overhead—it's more efficient to stream 128 MB than to make 32,000 separate 4 KB requests.
+> DFS blocks are much larger than local filesystem blocks (128 MB vs 4 KB) because:
+>
+> - Overhead of tracking each block scales with the number of blocks
+> - At petabyte scale, millions of 4 KB blocks would overwhelm metadata service
+> - Large blocks amortize network overhead
+> - More efficient to stream 128 MB than make 32,000 separate 4 KB requests
 
 ### 3.2. Object Stores
 
-Object stores (S3, GCS, Azure Blob) have become the dominant storage layer for batch processing, replacing HDFS in many deployments.
+**Object stores have become the dominant storage layer:**
+- S3, GCS, Azure Blob
+- Replacing HDFS in many deployments
+- Simpler operations model
 
 **Key differences from distributed filesystems:**
 
@@ -347,11 +381,19 @@ s3://my-data-bucket/2025/06/27/events.parquet
      └── bucket ──┘ └─────── key ─────────┘
 ```
 
-The slashes in the key are just conventions—there are no real directories. Listing objects with prefix `2025/06/` returns all matching keys.
+**Key point:**
+- The slashes in the key are just conventions—no real directories
+- Listing objects with prefix `2025/06/` returns all matching keys
 
 ### 3.3. Distributed Job Orchestration
 
-**In plain English:** An orchestrator is like a construction site foreman. When you want to build something (run a job), the foreman figures out which workers are available, assigns tasks, monitors progress, and handles problems when workers get sick or equipment breaks.
+**In plain English:**
+- An orchestrator is like a construction site foreman
+- When you want to build something (run a job):
+  - The foreman figures out which workers are available
+  - Assigns tasks
+  - Monitors progress
+  - Handles problems when workers get sick or equipment breaks
 
 **Components of job orchestration:**
 
@@ -403,7 +445,11 @@ The slashes in the key are just conventions—there are no real directories. Lis
 
 ### 3.4. Resource Allocation
 
-Scheduling is **NP-hard**—finding an optimal allocation is computationally infeasible. Consider this scenario:
+**The scheduling problem:**
+- Scheduling is **NP-hard**—optimal allocation is computationally infeasible
+- Real schedulers use heuristics instead
+
+**Consider this scenario:**
 
 > A cluster has 160 CPU cores. Two jobs arrive, each requesting 100 cores. What should the scheduler do?
 
@@ -416,11 +462,19 @@ Scheduling is **NP-hard**—finding an optimal allocation is computationally inf
 | **FIFO** | First job gets everything | Second job may starve |
 | **Preemption** | Kill some tasks to make room | Wasted work from killed tasks |
 
-Real schedulers use heuristics: FIFO, Dominant Resource Fairness (DRF), priority queues, capacity-based scheduling, and bin-packing algorithms.
+**Common scheduling heuristics:**
+- FIFO (first come, first served)
+- Dominant Resource Fairness (DRF)
+- Priority queues
+- Capacity-based scheduling
+- Bin-packing algorithms
 
 ### 3.5. Scheduling Workflows
 
-Batch jobs often form **workflows** or **DAGs** (Directed Acyclic Graphs) where output of one job feeds into another:
+**Batch jobs often form workflows (DAGs):**
+- **DAG** = Directed Acyclic Graph
+- Output of one job feeds into another
+- Scheduler ensures jobs run in correct order
 
 <DiagramContainer title="WORKFLOW / DAG EXAMPLE">
   <Column gap={20} align="center">
@@ -454,11 +508,19 @@ Batch jobs often form **workflows** or **DAGs** (Directed Acyclic Graphs) where 
 
 > **💡 Insight**
 >
-> There's an important distinction between **job orchestrators** (YARN, Kubernetes) that schedule individual jobs and **workflow orchestrators** (Airflow, Dagster) that manage dependencies between jobs. A workflow with 50-100 interconnected jobs is common in data pipelines.
+> There's an important distinction between:
+>
+> - **Job orchestrators** (YARN, Kubernetes) — schedule individual jobs
+> - **Workflow orchestrators** (Airflow, Dagster) — manage dependencies between jobs
+>
+> A workflow with 50-100 interconnected jobs is common in data pipelines.
 
 ### 3.6. Handling Faults
 
-Batch jobs run for long periods—minutes to days. With many parallel tasks, failures are inevitable:
+**Batch jobs run for long periods—failures are inevitable:**
+- Jobs run minutes to days
+- Many parallel tasks
+- Multiple failure modes:
 
 - Hardware faults (especially on commodity hardware)
 - Network interruptions
@@ -475,7 +537,11 @@ Batch jobs run for long periods—minutes to days. With many parallel tasks, fai
 
 > **💡 Insight**
 >
-> Because batch jobs regenerate output from scratch, fault recovery is simpler than in online systems: just delete partial output and rerun the failed task. This wouldn't work if the job had side effects (like sending emails), which is why batch processing emphasizes immutable inputs and pure transformations.
+> Because batch jobs regenerate output from scratch, fault recovery is simpler:
+>
+> - Just delete partial output and rerun the failed task
+> - This wouldn't work if the job had side effects (like sending emails)
+> - That's why batch processing emphasizes immutable inputs and pure transformations
 
 ---
 
@@ -483,7 +549,8 @@ Batch jobs run for long periods—minutes to days. With many parallel tasks, fai
 
 ### 4.1. MapReduce
 
-MapReduce mirrors our Unix log analysis example:
+**MapReduce mirrors our Unix log analysis example:**
+- Same pattern: read → extract → sort → group → aggregate
 
 <DiagramContainer title="MAPREDUCE PIPELINE">
   <Column gap={20}>
@@ -540,7 +607,11 @@ def reducer(key, values):
 
 > **💡 Insight**
 >
-> MapReduce's programming model comes from **functional programming**—specifically Lisp's `map` and `reduce` (fold) higher-order functions. The key properties: map is embarrassingly parallel (each input processed independently), and reduce processes each key independently. This makes parallelization trivial.
+> MapReduce's programming model comes from **functional programming**—specifically Lisp's `map` and `reduce` (fold) higher-order functions:
+>
+> - **Map** is embarrassingly parallel (each input processed independently)
+> - **Reduce** processes each key independently
+> - This makes parallelization trivial
 
 **Why MapReduce is mostly obsolete:**
 
@@ -551,7 +622,10 @@ def reducer(key, values):
 
 ### 4.2. Dataflow Engines
 
-Modern engines like **Spark** and **Flink** improve on MapReduce:
+**Modern engines like Spark and Flink improve on MapReduce:**
+- Flexible operators (not just map/reduce)
+- In-memory intermediate data
+- Pipelined execution
 
 <DiagramContainer title="MAPREDUCE vs. DATAFLOW ENGINES">
   <Column gap={30}>
@@ -604,7 +678,11 @@ Modern engines like **Spark** and **Flink** improve on MapReduce:
 
 ### 4.3. Shuffling Data
 
-**In plain English:** Shuffling is like sorting mail at a post office. Letters arrive from many mailboxes (mappers), and need to be organized so all letters for the same zip code (key) end up in the same bin (reducer).
+**In plain English:**
+- Shuffling is like sorting mail at a post office
+- Letters arrive from many mailboxes (mappers)
+- Need to organize so all letters for same zip code (key)
+- End up in the same bin (reducer)
 
 <DiagramContainer title="SHUFFLE IN MAPREDUCE">
   <Row gap={60} align="center">
@@ -662,11 +740,17 @@ Modern engines like **Spark** and **Flink** improve on MapReduce:
 
 > **💡 Insight**
 >
-> Despite the name, shuffle produces **sorted** order, not random order. The term comes from shuffling a deck of cards to redistribute them, not to randomize. Modern systems like BigQuery keep shuffle data in memory and use external shuffle services for resilience.
+> Despite the name, shuffle produces **sorted** order, not random order:
+>
+> - Term comes from shuffling cards to redistribute, not randomize
+> - Modern systems like BigQuery keep shuffle data in memory
+> - Use external shuffle services for resilience
 
 ### 4.4. JOIN and GROUP BY
 
-Shuffling enables distributed joins:
+**Shuffling enables distributed joins:**
+- Bring matching keys to same node
+- Process joined data locally
 
 <DiagramContainer title="SORT-MERGE JOIN">
   <Column gap={20}>
@@ -735,7 +819,10 @@ Shuffling enables distributed joins:
 
 ### 5.1. SQL for Batch Processing
 
-As batch systems matured, SQL became the lingua franca:
+**As batch systems matured, SQL became the lingua franca:**
+- Familiar to analysts and engineers
+- Optimizers can choose efficient execution plans
+- Integrates with existing BI tools
 
 ```sql
 -- Find top pages by age group
@@ -765,7 +852,10 @@ LIMIT 100;
 
 ### 5.2. DataFrames
 
-Data scientists preferred the DataFrame model from R and Pandas:
+**Data scientists preferred the DataFrame model:**
+- Familiar from R and Pandas
+- Step-by-step transformations
+- Works with SQL under the hood
 
 ```python
 # Pandas-style DataFrame API (runs distributed on Spark)
@@ -795,11 +885,19 @@ result.write.parquet("s3://output/page-demographics/")
 
 > **💡 Insight**
 >
-> Spark's DataFrame API is deceptively clever: unlike Pandas which executes immediately, Spark builds a **query plan** from your DataFrame operations, then optimizes it before execution. This means `df.filter(x).filter(y)` becomes a single optimized filter, not two passes over the data.
+> Spark's DataFrame API is deceptively clever:
+>
+> - Unlike Pandas which executes immediately, Spark builds a **query plan**
+> - Optimizes the plan before execution
+> - `df.filter(x).filter(y)` becomes a single optimized filter
+> - Not two passes over the data
 
 ### 5.3. Batch Processing and Data Warehouses Converge
 
-Historically separate, batch processing and data warehouses are merging:
+**Historically separate, batch processing and data warehouses are merging:**
+- Same underlying technologies (columnar storage, distributed shuffle)
+- Object storage (S3) as common foundation
+- SQL + DataFrame APIs both supported
 
 <DiagramContainer title="CONVERGENCE OF BATCH AND WAREHOUSES">
   <Column gap={30}>
@@ -860,7 +958,11 @@ Historically separate, batch processing and data warehouses are merging:
 
 ### 6.1. Extract-Transform-Load (ETL)
 
-**In plain English:** ETL is like a factory assembly line for data. Raw materials (source data) come in, get processed and quality-checked (transformed), and are packaged for shipping (loaded to destination).
+**In plain English:**
+- ETL is like a factory assembly line for data
+- Raw materials (source data) come in
+- Get processed and quality-checked (transformed)
+- Packaged for shipping (loaded to destination)
 
 <DiagramContainer title="ETL PIPELINE EXAMPLE">
   <Row gap={40} align="center">
@@ -920,7 +1022,9 @@ Historically separate, batch processing and data warehouses are merging:
 
 ### 6.2. Analytics
 
-Batch systems support two analytics patterns:
+**Batch systems support two analytics patterns:**
+- Pre-aggregation (scheduled jobs)
+- Ad hoc queries (interactive exploration)
 
 **1. Pre-aggregation (scheduled)**
 ```sql
@@ -952,7 +1056,10 @@ ORDER BY errors DESC;
 
 ### 6.3. Machine Learning
 
-Batch processing is central to ML workflows:
+**Batch processing is central to ML workflows:**
+- Feature engineering at scale
+- Model training (gradient descent across huge datasets)
+- Batch inference (score millions of records)
 
 <DiagramContainer title="ML BATCH PROCESSING WORKFLOW">
   <Column gap={25}>
@@ -1008,7 +1115,9 @@ Batch processing is central to ML workflows:
 
 ### 6.4. Bulk Data Imports
 
-Batch outputs often need to reach production databases. **Don't write directly** from batch jobs:
+**Batch outputs often need to reach production databases.**
+
+**Why NOT write directly from batch jobs:**
 
 | Problem | Why |
 |---------|-----|
@@ -1054,7 +1163,7 @@ Batch outputs often need to reach production databases. **Don't write directly**
 
 ## 7. Summary
 
-In this chapter, we explored batch processing from Unix pipes to petabyte-scale distributed systems:
+**In this chapter, we explored batch processing from Unix pipes to petabyte-scale systems.**
 
 **Core concepts:**
 - Batch processing transforms **immutable inputs** into **derived outputs**
@@ -1079,7 +1188,12 @@ In this chapter, we explored batch processing from Unix pipes to petabyte-scale 
 
 > **💡 Insight**
 >
-> The key insight of batch processing is treating computation as **pure functions**: given the same input, produce the same output, with no side effects. This makes jobs reproducible, retriable, and parallelizable. When something goes wrong, you can always rerun—and that property is worth its weight in gold for building reliable systems.
+> The key insight of batch processing is treating computation as **pure functions**:
+>
+> - Given the same input, produce the same output (no side effects)
+> - Jobs become reproducible, retriable, and parallelizable
+> - When something goes wrong, you can always rerun
+> - That property is worth its weight in gold for building reliable systems
 
 In Chapter 12, we'll turn to **stream processing**, where inputs are unbounded and jobs never complete. We'll see how stream processing builds on batch concepts while introducing new challenges around time, ordering, and state.
 
