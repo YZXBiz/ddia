@@ -377,4 +377,4 @@ How do we build applications that need to:
 
 ---
 
-**Next:** [Chapter 2: Nonfunctional Requirements](./chapter02-nonfunctional-requirements.md) — Understanding reliability, scalability, and maintainability
+**Next:** [Chapter 2: Nonfunctional Requirements](/ddia/part1/chapter02-nonfunctional-requirements) — Understanding reliability, scalability, and maintainability
