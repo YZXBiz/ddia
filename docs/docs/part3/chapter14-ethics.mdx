@@ -50,7 +50,17 @@ import { Box, Arrow, Row, Column, Group, DiagramContainer, ProcessFlow, TreeDiag
 
 ### 1.1. Data is About People
 
-We talk about data as an abstract thing—rows in a database, events in a stream, files in object storage. But remember that many datasets are about people: their behavior, their interests, their identity. We must treat such data with humanity and respect.
+**How we abstract away humanity:**
+- "Rows in a database"
+- "Events in a stream"
+- "Files in object storage"
+
+**What it actually is:**
+- People's behavior
+- People's interests
+- People's identity
+
+**Implication:** We must treat such data with humanity and respect.
 
 <DiagramContainer title="WHAT DATA REALLY REPRESENTS">
   <Row gap={60} align="center">
@@ -169,11 +179,27 @@ We talk about data as an abstract thing—rows in a database, events in a stream
   />
 </DiagramContainer>
 
-**In plain English:** Imagine being rejected for job after job, denied loans, refused housing—not because of anything you actually did, but because some algorithm labeled you as "risky." You have no way to appeal, no way to prove yourself. This is what researchers call "algorithmic prison"—being systematically excluded from society without proof of guilt.
+**In plain English:**
+- Rejected for jobs, denied loans, refused housing
+- Not because of anything you did
+- Because an algorithm labeled you "risky"
+- No way to appeal, no way to prove yourself
+- Researchers call this: **"algorithmic prison"**
 
-**In technical terms:** As algorithmic decision-making becomes more widespread, someone who has (accurately or falsely) been labeled as risky by some algorithm may suffer a large number of "no" decisions. Systematically being excluded from jobs, air travel, insurance coverage, property rental, financial services, and other key aspects of society is such a large constraint of the individual's freedom that it has been called "algorithmic prison."
+**In technical terms:**
+- Algorithmic decision-making → more "no" decisions for those labeled risky
+- Systematically excluded from:
+  - Jobs
+  - Air travel
+  - Insurance coverage
+  - Property rental
+  - Financial services
+- Constraint so severe → termed "algorithmic prison"
 
-**Why it matters:** In countries that respect human rights, the criminal justice system presumes innocence until proven guilty. Automated systems can systematically and arbitrarily exclude a person from participating in society without any proof of guilt, and with little chance of appeal.
+**Why it matters:**
+- Criminal justice: presumes innocence until proven guilty
+- Automated systems: exclude people without proof of guilt
+- Little to no chance of appeal
 
 > **💡 Insight**
 >
@@ -194,11 +220,21 @@ We talk about data as an abstract thing—rows in a database, events in a stream
   />
 </DiagramContainer>
 
-**In plain English:** People have this idea that algorithms are objective and fair, while humans are biased. But algorithms learn from data created by biased humans. If you feed a machine learning system data from a racist past, it will learn to be racist. "Machine learning is like money laundering for bias"—it takes dirty input and makes it look clean and mathematical.
+**In plain English:**
+- Myth: algorithms are objective, humans are biased
+- Reality: algorithms learn from biased human data
+- Racist data → racist algorithm
+- "Machine learning is like money laundering for bias" — dirty input looks clean and mathematical
 
-**In technical terms:** When we develop predictive analytics and AI systems, we are not merely automating a human's decision by using software to specify the rules for when to say yes or no; we are even leaving the rules themselves to be inferred from data. However, the patterns learned by these systems are opaque: even if there is some correlation in the data, we may not know why. If there is a systematic bias in the input to an algorithm, the system will most likely learn and amplify that bias in its output.
+**In technical terms:**
+- AI systems infer rules from data (not explicitly programmed)
+- Patterns learned are opaque — correlation without understanding why
+- Systematic bias in input → amplified bias in output
 
-**Why it matters:** Many countries have anti-discrimination laws prohibiting treating people differently based on ethnicity, age, gender, sexuality, disability, or beliefs. But what happens when algorithms use features that correlate with these protected traits? For example, in racially segregated neighborhoods, a person's postal code is a strong predictor of race.
+**Why it matters:**
+- Anti-discrimination laws exist for: ethnicity, age, gender, sexuality, disability, beliefs
+- Problem: features that *correlate* with protected traits
+- Example: in segregated neighborhoods, postal code predicts race
 
 **Real-world example:**
 
@@ -248,17 +284,34 @@ We talk about data as an abstract thing—rows in a database, events in a stream
   </Row>
 </DiagramContainer>
 
-**In plain English:** When a human makes a mistake, you can hold them accountable. When an algorithm makes a mistake, who do you blame? The engineer who wrote the code? The data scientist who trained the model? The product manager who approved it? The company that deployed it? Everyone points fingers and says "not my fault."
+**In plain English:**
+- Human mistake → hold them accountable
+- Algorithm mistake → who to blame?
+  - Engineer who wrote code?
+  - Data scientist who trained model?
+  - Product manager who approved it?
+  - Company that deployed it?
+- Everyone points fingers: "not my fault"
 
-**In technical terms:** Automated decision making opens the question of responsibility and accountability. If a human makes a mistake, they can be held accountable, and the person affected by the decision can appeal. Algorithms make mistakes too, but who is accountable if they go wrong? When a self-driving car causes an accident, who is responsible? If an automated credit scoring algorithm systematically discriminates against people of a particular race or religion, is there any recourse?
+**In technical terms:**
+- Automated decision-making → accountability problem
+- Human mistakes: can be appealed
+- Algorithm mistakes: who is responsible?
+  - Self-driving car accident → who's liable?
+  - Discriminatory credit scoring → any recourse?
 
-**Why it matters:** People should not be able to evade their responsibility by blaming an algorithm. If a decision by your machine learning system comes under judicial review, can you explain to the judge how the algorithm made its decision?
+**Why it matters:**
+- People should not evade responsibility by blaming algorithms
+- Key question: Can you explain to a judge how the algorithm made its decision?
 
 **The problem with opacity:**
 
-**In plain English:** Old-school credit scores were based on your actual borrowing history—did you pay bills on time? Modern algorithmic scoring uses hundreds of factors, many of which seem irrelevant (what you buy, where you live, who your friends are). If there's an error, good luck figuring out what went wrong or how to fix it.
-
-**In technical terms:** Credit rating agencies are an old example of collecting data to make decisions about people. A bad credit score makes life difficult, but at least a credit score is normally based on relevant facts about a person's actual borrowing history, and any errors in the record can be corrected. However, scoring algorithms based on machine learning typically use a much wider range of inputs and are much more opaque.
+| Old-School Credit Scores | Modern Algorithmic Scoring |
+|-------------------------|---------------------------|
+| Based on borrowing history | Hundreds of factors |
+| Did you pay bills on time? | What you buy, where you live, who your friends are |
+| Errors can be identified | Errors? Good luck figuring out what went wrong |
+| Can be corrected | Much more opaque |
 
 **The stereotyping problem:**
 
@@ -294,19 +347,39 @@ We talk about data as an abstract thing—rows in a database, events in a stream
 
 **The probabilistic problem:**
 
-**In plain English:** Statistics work for populations, not individuals. If the average life expectancy is 80 years, that doesn't mean you'll drop dead on your 80th birthday. Similarly, an algorithm might be 80% accurate overall, but dead wrong about you specifically. Yet your life is affected by that wrong prediction.
+| Statistics Work For | Statistics Don't Work For |
+|---------------------|---------------------------|
+| Populations | Individuals |
+| Averages | Your specific case |
+| "80% accurate overall" | Whether it's wrong about YOU |
 
-**In technical terms:** Much data is statistical in nature, which means that even if the probability distribution on the whole is correct, individual cases may well be wrong. For example, if the average life expectancy in your country is 80 years, that doesn't mean you're expected to drop dead on your 80th birthday. From the average and the probability distribution, you can't say much about the age to which one particular person will live. Similarly, the output of a prediction system is probabilistic and may well be wrong in individual cases.
+**The gap:**
+- Average life expectancy = 80 years
+- Doesn't mean you die on your 80th birthday
+- Algorithm 80% accurate → still wrong about 20% of people
+- Your life affected by that wrong prediction
 
 ---
 
 ## 3. Feedback Loops
 
-**In plain English:** The most dangerous thing about algorithmic decision-making isn't the initial prediction—it's what happens next. Predictions change reality, which generates new data, which feeds back into the algorithm, creating a vicious cycle. A small initial bias can snowball into massive inequality.
+**In plain English:**
+- The danger isn't the initial prediction
+- It's what happens next:
+  - Predictions change reality
+  - Changed reality generates new data
+  - New data feeds back into algorithm
+  - Vicious cycle
+- Small initial bias → snowballs into massive inequality
 
-**In technical terms:** When predictive analytics affect people's lives, particularly pernicious problems arise due to self-reinforcing feedback loops. These feedback loops can amplify existing inequalities and create downward spirals that are difficult or impossible to escape.
+**In technical terms:**
+- Predictive analytics → self-reinforcing feedback loops
+- Feedback loops amplify existing inequalities
+- Create downward spirals that are difficult/impossible to escape
 
-**Why it matters:** We can't always predict when such feedback loops happen, but many consequences can be predicted by thinking about the entire system—an approach known as systems thinking.
+**Why it matters:**
+- Can't always predict when feedback loops happen
+- Solution: **systems thinking** — analyze the entire system
 
 ### 3.1. Self-Reinforcing Cycles
 
@@ -336,21 +409,39 @@ We talk about data as an abstract thing—rows in a database, events in a stream
 
 **Example 1: The employment trap**
 
-**In plain English:** Some employers use credit scores to evaluate job candidates (the logic being that financial problems might make someone unreliable). But if you lose your job due to bad luck, your credit score suffers, making it harder to get a new job. No job means worse credit, which means no job—you're trapped in a spiral.
+| Step | What Happens |
+|------|--------------|
+| 1 | Employers use credit scores to evaluate candidates |
+| 2 | You lose job due to bad luck |
+| 3 | Miss bill payments → credit score drops |
+| 4 | Lower credit score → harder to get new job |
+| 5 | No job → more missed payments → worse credit |
+| 6 | **Trapped in downward spiral** |
 
-**In technical terms:** Consider the case of employers using credit scores to evaluate potential hires. You may be a good worker with a good credit score, but suddenly find yourself in financial difficulties due to a misfortune outside of your control. As you miss payments on your bills, your credit score suffers, and you will be less likely to find work. Joblessness pushes you toward poverty, which further worsens your scores, making it even harder to find employment. It's a downward spiral due to poisonous assumptions, hidden behind a camouflage of mathematical rigor and data.
+*"A downward spiral due to poisonous assumptions, hidden behind a camouflage of mathematical rigor and data."*
+
+---
 
 **Example 2: Algorithmic collusion**
 
-**In plain English:** When gas stations in Germany replaced human pricing with algorithmic pricing, you might expect more competition and lower prices. The opposite happened. The algorithms learned to avoid price wars—essentially colluding to keep prices high, even though no human explicitly programmed them to do so.
+- Gas stations in Germany → replaced human pricing with algorithms
+- Expected: more competition, lower prices
+- Reality: algorithms learned to avoid price wars
+- Result: prices went UP (algorithms colluded)
+- No human explicitly programmed this
 
-**In technical terms:** Economists found that when gas stations in Germany introduced algorithmic prices, competition was reduced and prices for consumers went up because the algorithms learned to collude.
+---
 
 **Example 3: Echo chambers**
 
-**In plain English:** Recommendation systems learn what you like, then show you more of the same. Sounds good, right? But it means you only see opinions you already agree with, creating echo chambers where stereotypes, misinformation, and polarization breed. We're already seeing the impact on election campaigns.
-
-**In technical terms:** When services become good at predicting what content users want to see, they may end up showing people only opinions they already agree with, leading to echo chambers in which stereotypes, misinformation, and polarization can breed.
+- Recommendation systems learn what you like
+- Show you more of the same
+- Result: you only see opinions you already agree with
+- Creates echo chambers where:
+  - Stereotypes breed
+  - Misinformation spreads
+  - Polarization grows
+- Already impacting election campaigns
 
 ### 3.2. Systems Thinking
 
@@ -386,19 +477,45 @@ We talk about data as an abstract thing—rows in a database, events in a stream
 >
 > We can't always predict when feedback loops will happen. However, many consequences can be predicted by thinking about the entire system (not just the computerized parts, but also the people interacting with it). We can try to understand how a data analysis system responds to different behaviors, structures, or characteristics. Does the system reinforce and amplify existing differences between people (e.g., making the rich richer or the poor poorer), or does it try to combat injustice?
 
-**In plain English:** Don't just think about your algorithm in isolation. Think about the whole system—how real people will interact with it, how it will change their behavior, what incentives it creates, what feedback loops might emerge. Even with the best intentions, we must beware of unintended consequences.
+**In plain English:**
+- Don't think about your algorithm in isolation
+- Think about the whole system:
+  - How will real people interact with it?
+  - How will it change their behavior?
+  - What incentives does it create?
+  - What feedback loops might emerge?
+- Even with best intentions → beware unintended consequences
 
-**In technical terms:** Systems thinking means analyzing how a data analysis system responds to different behaviors, structures, or characteristics. It requires understanding not just the technical components, but the humans interacting with the system and how the system's outputs feed back into its inputs.
+**In technical terms:**
+- Systems thinking = analyzing how data systems respond to behaviors, structures, characteristics
+- Must understand:
+  - Technical components
+  - Humans interacting with system
+  - How outputs feed back into inputs
 
 ---
 
 ## 4. Privacy and Surveillance
 
-**In plain English:** There's tracking that helps you (like when Netflix recommends shows you actually like), and then there's surveillance (like when your health insurance company requires you to wear a fitness tracker and adjusts your premiums based on your movements). The line between "helpful personalization" and "creepy surveillance" has gotten very blurry.
+**In plain English:**
 
-**In technical terms:** What is the relationship between the organizations collecting data and the people whose data is being collected? When a system only stores data that a user has explicitly entered, the system is performing a service for the user. But when a user's activity is tracked and logged as a side effect of other things they are doing, the relationship is less clear. The service no longer just does what the user tells it to do, but it takes on interests of its own, which may conflict with the user's interests.
+| Helpful Tracking | Surveillance |
+|------------------|--------------|
+| Netflix recommends shows you like | Health insurance requires fitness tracker |
+| Improves your experience | Adjusts premiums based on movements |
+| You're the customer | You're the product |
 
-**Why it matters:** Depending on a company's business model, tracking often doesn't stop at improving features for users. If the service is funded through advertising, the advertisers are the actual customers, and the users' interests take second place.
+The line between "helpful personalization" and "creepy surveillance" has gotten very blurry.
+
+**In technical terms:**
+- User explicitly enters data → service for user
+- User activity tracked as side effect → relationship unclear
+- Service takes on its own interests → may conflict with user's interests
+
+**Why it matters:**
+- Ad-funded services: advertisers are the actual customers
+- Users' interests take second place
+- "If you're not paying, you're the product"
 
 ### 4.1. The Surveillance Infrastructure
 
