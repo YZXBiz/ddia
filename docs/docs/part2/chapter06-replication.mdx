@@ -64,25 +64,49 @@ Replication means keeping a copy of the same data on multiple machines that are 
 - **To allow the system to continue working** even if some of its parts have failed (and thus increase availability)
 - **To scale out the number of machines** that can serve read queries (and thus increase read throughput)
 
-In this chapter we will assume that your dataset is small enough that each machine can hold a copy of the entire dataset. In Chapter 7 we will relax that assumption and discuss sharding (partitioning) of datasets that are too big for a single machine. In later chapters we will discuss various kinds of faults that can occur in a replicated data system, and how to deal with them.
+**This chapter assumes:**
+- Dataset small enough for each machine to hold entire copy
+- Chapter 7 covers sharding for larger datasets
+- Later chapters cover fault handling
 
-If the data that you're replicating does not change over time, then replication is easy: you just need to copy the data to every node once, and you're done. All of the difficulty in replication lies in handling changes to replicated data, and that's what this chapter is about. We will discuss three families of algorithms for replicating changes between nodes: single-leader, multi-leader, and leaderless replication. Almost all distributed databases use one of these three approaches. They all have various pros and cons, which we will examine in detail.
+**The core challenge:**
+- Static data is easy: copy once, done
+- Changing data is hard: propagating updates while maintaining consistency
+- Three algorithm families: single-leader, multi-leader, leaderless
 
 > **💡 Insight**
 >
 > The fundamental challenge of replication isn't copying data—it's handling **change**. If data never changed, you'd copy it once and be done. But data does change, and propagating those changes while maintaining consistency across unreliable networks is where the complexity lies.
 
-There are many trade-offs to consider with replication: for example, whether to use synchronous or asynchronous replication, and how to handle failed replicas. Those are often configuration options in databases, and although the details vary by database, the general principles are similar across many different implementations. We will discuss the consequences of such choices in this chapter.
+**Key trade-offs in replication:**
+- Synchronous vs asynchronous replication
+- How to handle failed replicas
+- Often database configuration options
+- Principles similar across implementations
 
-Replication of databases is an old topic—the principles haven't changed much since they were studied in the 1970s, because the fundamental constraints of networks have remained the same. Despite being so old, concepts such as eventual consistency still cause confusion. In "Problems with Replication Lag" we will get more precise about eventual consistency and discuss things like the read-your-writes and monotonic reads guarantees.
+**Historical note:**
+- Replication studied since 1970s
+- Fundamental constraints of networks haven't changed
+- Concepts like eventual consistency still cause confusion today
 
 ### Backups and replication
 
-You might be wondering whether you still need backups if you have replication. The answer is yes, because they have different purposes: replicas quickly reflect writes from one node on other nodes, but backups store old snapshots of the data so that you can go back in time. If you accidentally delete some data, replication doesn't help since the deletion will have also been propagated to the replicas, so you need a backup if you want to restore the deleted data.
+**Do you still need backups if you have replication?** Yes—different purposes:
 
-In fact, replication and backups are often complementary to each other. Backups are sometimes part of the process of setting up replication, as we shall see in "Setting Up New Followers". Conversely, archiving replication logs can be part of a backup process.
+| Feature | Replication | Backup |
+|---------|-------------|--------|
+| Purpose | Reflect current writes across nodes | Store old snapshots for point-in-time recovery |
+| Accidental delete | ❌ Deletion propagates to all replicas | ✅ Can restore from backup |
+| Timing | Real-time | Periodic snapshots |
 
-Some databases internally maintain immutable snapshots of past states, which serve as a kind of internal backup. However, this means keeping old versions of the data on the same storage media as the current state. If you have a large amount of data, it can be cheaper to keep the backups of old data in an object store that is optimized for infrequently-accessed data, and to store only the current state of the database in primary storage.
+**How they complement each other:**
+- Backups are part of setting up replication (see "Setting Up New Followers")
+- Archiving replication logs can be part of backup process
+
+**Internal snapshots:**
+- Some databases maintain immutable snapshots of past states
+- Trade-off: keeps old data on same (expensive) storage
+- Alternative: store current state in primary storage, backups in cheaper object storage
 
 ## 1. Single-Leader Replication
 
@@ -92,9 +116,10 @@ Some databases internally maintain immutable snapshots of past states, which ser
 
 **Why it matters:** This simple model is the foundation of most database replication. It's easy to reason about and provides strong consistency when configured synchronously, but introduces complexity around failover and replication lag.
 
-Each node that stores a copy of the database is called a replica. With multiple replicas, a question inevitably arises: how do we ensure that all the data ends up on all the replicas?
-
-Every write to the database needs to be processed by every replica; otherwise, the replicas would no longer contain the same data. The most common solution is called leader-based replication, primary-backup, or active/passive. It works as follows:
+**Key terms:**
+- **Replica** = node that stores a copy of the database
+- **Core problem** = ensuring all data ends up on all replicas
+- **Solution** = leader-based replication (also: primary-backup, active/passive)
 
 <DiagramContainer title="Single-Leader Replication">
   <Column gap="lg">
@@ -127,9 +152,20 @@ Every write to the database needs to be processed by every replica; otherwise, t
 
 3. **When a client wants to read from the database**, it can query either the leader or any of the followers. However, writes are only accepted on the leader (the followers are read-only from the client's point of view).
 
-If the database is sharded (see Chapter 7), each shard has one leader. Different shards may have their leaders on different nodes, but each shard must nevertheless have one leader node. In "Multi-Leader Replication" we will discuss an alternative model in which a system may have multiple leaders for the same shard at the same time.
+**Sharding interaction:**
+- If database is sharded (Chapter 7), each shard has one leader
+- Different shards may have leaders on different nodes
+- Multi-leader replication: multiple leaders for same shard (covered later)
 
-Single-leader replication is very widely used. It's a built-in feature of many relational databases, such as PostgreSQL, MySQL, Oracle Data Guard, and SQL Server's Always On Availability Groups. It is also used in some document databases such as MongoDB and DynamoDB, message brokers such as Kafka, replicated block devices such as DRBD, and some network filesystems. Many consensus algorithms such as Raft, which is used for replication in CockroachDB, TiDB, etcd, and RabbitMQ quorum queues (among others), are also based on a single leader, and automatically elect a new leader if the old one fails (we will discuss consensus in more detail in Chapter 10).
+**Where single-leader is used:**
+
+| Category | Examples |
+|----------|----------|
+| Relational DBs | PostgreSQL, MySQL, Oracle Data Guard, SQL Server Always On |
+| Document DBs | MongoDB, DynamoDB |
+| Message brokers | Kafka |
+| Block devices | DRBD |
+| Consensus algorithms | Raft (CockroachDB, TiDB, etcd, RabbitMQ quorum queues) |
 
 :::note
 In older documents you may see the term master–slave replication. It means the same as leader-based replication, but the term should be avoided as it is widely considered offensive.
@@ -143,9 +179,15 @@ In older documents you may see the term master–slave replication. It means the
 
 **Why it matters:** This choice determines your durability guarantees (will you lose data on failure?) and availability (can you keep writing if followers go down?). Most systems use semi-synchronous: one synchronous follower plus async followers.
 
-An important detail of a replicated system is whether the replication happens synchronously or asynchronously. (In relational databases, this is often a configurable option; other systems are often hardcoded to be either one or the other.)
+**Key configuration choice:**
+- Relational databases: often configurable
+- Other systems: often hardcoded one way
 
-Think about what happens when the user of a website updates their profile image. At some point in time, the client sends the update request to the leader; shortly afterward, it is received by the leader. At some point, the leader forwards the data change to the followers. Eventually, the leader notifies the client that the update was successful.
+**Example: User updates profile image**
+1. Client sends update request → leader
+2. Leader receives and processes
+3. Leader forwards to followers
+4. Leader confirms success to client
 
 <DiagramContainer title="Synchronous vs. Asynchronous Replication">
   <ProcessFlow
@@ -160,9 +202,17 @@ Think about what happens when the user of a website updates their profile image.
   />
 </DiagramContainer>
 
-In the example above, the replication to follower 1 is **synchronous**: the leader waits until follower 1 has confirmed that it received the write before reporting success to the user, and before making the write visible to other clients. The replication to follower 2 is **asynchronous**: the leader sends the message, but doesn't wait for a response from the follower.
+**In the diagram:**
+- **Follower 1 (sync)** — leader waits for confirmation before reporting success
+- **Follower 2 (async)** — leader sends message, doesn't wait for response
 
-The diagram shows that there is a substantial delay before follower 2 processes the message. Normally, replication is quite fast: most database systems apply changes to followers in less than a second. However, there is no guarantee of how long it might take. There are circumstances when followers might fall behind the leader by several minutes or more; for example, if a follower is recovering from a failure, if the system is operating near maximum capacity, or if there are network problems between the nodes.
+**Replication timing:**
+- Normal case: < 1 second
+- No guarantees on maximum delay
+- Can fall behind by minutes when:
+  - Follower recovering from failure
+  - System at max capacity
+  - Network problems between nodes
 
 <ComparisonTable
   beforeTitle="Synchronous"
@@ -181,15 +231,28 @@ The diagram shows that there is a substantial delay before follower 2 processes 
 >
 > The synchronous vs. asynchronous choice is fundamentally about **trading durability for availability**. Synchronous means "don't lose my data even if the leader crashes immediately," but at the cost of "I can't write if a follower is down." Most production systems use semi-synchronous: one sync follower for durability, the rest async for availability.
 
-**The advantage of synchronous replication** is that the follower is guaranteed to have an up-to-date copy of the data that is consistent with the leader. If the leader suddenly fails, we can be sure that the data is still available on the follower. **The disadvantage** is that if the synchronous follower doesn't respond (because it has crashed, or there is a network fault, or for any other reason), the write cannot be processed. The leader must block all writes and wait until the synchronous replica is available again.
+**Synchronous replication:**
+- ✅ Follower guaranteed up-to-date, consistent with leader
+- ✅ If leader fails, data still available on follower
+- ❌ If sync follower doesn't respond → write blocked
+- ❌ Leader must wait until sync replica available
 
-For that reason, it is impracticable for all followers to be synchronous: any one node outage would cause the whole system to grind to a halt. In practice, if a database offers synchronous replication, it often means that **one** of the followers is synchronous, and the others are asynchronous. If the synchronous follower becomes unavailable or slow, one of the asynchronous followers is made synchronous. This guarantees that you have an up-to-date copy of the data on at least two nodes: the leader and one synchronous follower. This configuration is sometimes also called **semi-synchronous**.
+**Why all-synchronous doesn't work:**
+- Any single node outage → whole system halts
+- Solution: **semi-synchronous** (one sync follower, rest async)
+- If sync follower fails → promote an async follower to sync
+- Guarantees: up-to-date copy on at least 2 nodes (leader + 1 sync)
 
-In some systems, a majority (e.g., 3 out of 5 replicas, including the leader) of replicas is updated synchronously, and the remaining minority is asynchronous. This is an example of a quorum, which we will discuss further in "Quorums for reading and writing". Majority quorums are often used in systems that use a consensus protocol for automatic leader election, which we will return to in Chapter 10.
+**Quorum-based replication:**
+- Some systems: majority (e.g., 3/5) sync, minority async
+- Example of quorum (covered in "Quorums for reading and writing")
+- Often used with consensus protocols for auto leader election (Chapter 10)
 
-Sometimes, leader-based replication is configured to be **completely asynchronous**. In this case, if the leader fails and is not recoverable, any writes that have not yet been replicated to followers are lost. This means that a write is not guaranteed to be durable, even if it has been confirmed to the client. However, a fully asynchronous configuration has the advantage that the leader can continue processing writes, even if all of its followers have fallen behind.
-
-Weakening durability may sound like a bad trade-off, but asynchronous replication is nevertheless widely used, especially if there are many followers or if they are geographically distributed. We will return to this issue in "Problems with Replication Lag".
+**Fully asynchronous:**
+- If leader fails → uncommitted writes are lost
+- Writes not guaranteed durable even if confirmed to client
+- ✅ Leader continues processing even if all followers behind
+- Widely used when: many followers, geographically distributed
 
 ### 1.2. Setting Up New Followers
 
@@ -199,11 +262,20 @@ Weakening durability may sound like a bad trade-off, but asynchronous replicatio
 
 **Why it matters:** You need to add followers without downtime—locking the database would violate high availability. The snapshot-plus-catchup approach enables adding replicas while the system continues serving traffic.
 
-From time to time, you need to set up new followers—perhaps to increase the number of replicas, or to replace failed nodes. How do you ensure that the new follower has an accurate copy of the leader's data?
+**When do you need new followers?**
+- Increase number of replicas
+- Replace failed nodes
 
-Simply copying data files from one node to another is typically not sufficient: clients are constantly writing to the database, and the data is always in flux, so a standard file copy would see different parts of the database at different points in time. The result might not make any sense.
+**Why not just copy files?**
+- ❌ Clients constantly writing → data always in flux
+- ❌ Standard file copy sees different parts at different times
+- ❌ Result: inconsistent data
 
-You could make the files on disk consistent by locking the database (making it unavailable for writes), but that would go against our goal of high availability. Fortunately, setting up a follower can usually be done without downtime. Conceptually, the process looks like this:
+**Why not lock the database?**
+- Would make it unavailable for writes
+- Violates high availability goal
+
+**Solution:** Snapshot + catch up (no downtime required)
 
 <ProcessFlow
   steps={[
@@ -224,9 +296,14 @@ You could make the files on disk consistent by locking the database (making it u
 
 4. **When the follower has processed the backlog** of data changes since the snapshot, we say it has **caught up**. It can now continue to process data changes from the leader as they happen.
 
-The practical steps of setting up a follower vary significantly by database. In some systems the process is fully automated, whereas in others it can be a somewhat arcane multi-step workflow that needs to be manually performed by an administrator.
+**Implementation varies:**
+- Some databases: fully automated
+- Others: manual multi-step workflow by administrator
 
-You can also archive the replication log to an object store; along with periodic snapshots of the whole database in the object store this is a good way of implementing database backups and disaster recovery. You can also perform steps 1 and 2 of setting up a new follower by downloading those files from the object store. For example, WAL-G does this for PostgreSQL, MySQL, and SQL Server, and Litestream does the equivalent for SQLite.
+**Object store integration:**
+- Archive replication logs + periodic snapshots → disaster recovery
+- New follower setup: download snapshot/logs from object store
+- Tools: WAL-G (PostgreSQL, MySQL, SQL Server), Litestream (SQLite)
 
 ### 1.3. Databases backed by object storage
 
@@ -236,7 +313,9 @@ You can also archive the replication log to an object store; along with periodic
 
 **Why it matters:** This architectural shift simplifies distributed databases by offloading replication, durability, and transactions to the object store layer. Systems like Snowflake and WarpStream use "zero-disk architecture" where all data lives in S3.
 
-Object storage can be used for more than archiving data. Many databases are beginning to use object stores such as Amazon Web Services S3, Google Cloud Storage, and Azure Blob Storage to serve data for live queries. Storing database data in object storage has many benefits:
+**Object storage for live queries** (not just archiving):
+- Amazon S3, Google Cloud Storage, Azure Blob Storage
+- Benefits:
 
 <CardGrid
   columns={2}
@@ -268,11 +347,28 @@ Object storage can be used for more than archiving data. Many databases are begi
   ]}
 />
 
-These benefits dramatically simplify the database architecture by shifting the responsibility of transactions, leadership election, and replication to object storage.
+**Key benefit:** Shifts responsibility of transactions, leadership election, and replication to object storage.
 
-Systems that adopt object storage for replication must grapple with some tradeoffs. Notably, object stores have much higher read and write latencies than local disks or virtual block devices such as EBS. Many cloud providers also charge a per-API call fee, which forces systems to batch reads and writes to reduce cost. Such batching further increases latency. Moreover, many object stores do not offer standard filesystem interfaces. This prevents systems that lack object storage integration from leveraging object storage. Interfaces such as filesystem in userspace (FUSE) allow operators to mount object store buckets as filesystems that applications can use without knowing their data is stored on object storage. Still, many FUSE interfaces to object stores lack POSIX features such as non-sequential writes or symlinks, which systems might depend on.
+---
 
-Different systems deal with these trade-offs in various ways. Some introduce a **tiered storage architecture** that places less frequently accessed data on object storage while new or frequently accessed data is kept on faster storage devices such as SSDs, NVMe, or even in memory. Other systems use object storage as their primary storage tier, but use a separate low-latency storage system such as Amazon's EBS or Neon's Safekeepers to store their WAL. Recently, some systems have gone even farther by adopting a **zero-disk architecture (ZDA)**. ZDA-based systems persist all data to object storage and use disks and memory strictly for caching. This allows nodes to have no persistent state, which dramatically simplifies operations. WarpStream, Confluent Freight, Buf's Bufstream, and Redpanda Serverless are all Kafka-compatible systems built using a zero-disk architecture. Nearly every modern cloud data warehouse also adopts such an architecture, as does Turbopuffer (a vector search engine), and SlateDB (a cloud-native LSM storage engine).
+**Tradeoffs of object storage:**
+
+| Challenge | Description |
+|-----------|-------------|
+| Higher latency | Much slower than local disks or EBS |
+| Per-API fees | Batching reads/writes → more latency |
+| No standard filesystem | Need integration or FUSE mounts |
+| FUSE limitations | Lacks POSIX features (non-sequential writes, symlinks) |
+
+**Architecture approaches:**
+
+| Approach | Description | Examples |
+|----------|-------------|----------|
+| **Tiered storage** | Hot data on SSD/NVMe, cold data on object store | Many databases |
+| **Object + WAL** | Object storage primary, low-latency system for WAL | Neon (Safekeepers) |
+| **Zero-disk (ZDA)** | All data on object store, disks for caching only | WarpStream, Confluent Freight, Bufstream, Redpanda Serverless, Snowflake, Turbopuffer, SlateDB |
+
+**Zero-disk benefit:** Nodes have no persistent state → dramatically simplifies operations
 
 ### 1.4. Handling Node Outages
 
@@ -282,21 +378,38 @@ Different systems deal with these trade-offs in various ways. Some introduce a *
 
 **Why it matters:** Failover is one of the hardest problems in distributed systems. Getting it wrong can cause split brain (two leaders), data loss, or prolonged downtime. Many production outages stem from failed failover attempts.
 
-Any node in the system can go down, perhaps unexpectedly due to a fault, but just as likely due to planned maintenance (for example, rebooting a machine to install a kernel security patch). Being able to reboot individual nodes without downtime is a big advantage for operations and maintenance. Thus, our goal is to keep the system as a whole running despite individual node failures, and to keep the impact of a node outage as small as possible.
+**Node failures:**
+- Unexpected: hardware faults, software crashes, network issues
+- Planned: maintenance, kernel security patches
 
-How do you achieve high availability with leader-based replication?
+**Goal:** Keep system running despite individual failures, minimize impact
+
+**High availability with leader-based replication:** Two cases below
 
 #### Follower failure: Catch-up recovery
 
-On its local disk, each follower keeps a log of the data changes it has received from the leader. If a follower crashes and is restarted, or if the network between the leader and the follower is temporarily interrupted, the follower can recover quite easily: from its log, it knows the last transaction that was processed before the fault occurred. Thus, the follower can connect to the leader and request all the data changes that occurred during the time when the follower was disconnected. When it has applied these changes, it has caught up to the leader and can continue receiving a stream of data changes as before.
+**How it works:**
+1. Each follower keeps local log of changes received from leader
+2. After crash/network interruption, follower knows last processed transaction
+3. Connects to leader, requests all changes since that point
+4. Once caught up → continues receiving live stream
 
-Although follower recovery is conceptually simple, it can be challenging in terms of performance: if the database has a high write throughput or if the follower has been offline for a long time, there might be a lot of writes to catch up on. There will be high load on both the recovering follower and the leader (which needs to send the backlog of writes to the follower) while this catch-up is ongoing.
+**Performance challenges:**
+- High write throughput or long offline time → lots to catch up
+- High load on both follower (applying) and leader (sending)
 
-The leader can delete its log of writes once all followers have confirmed that they have processed it, but if a follower is unavailable for a long time, the leader faces a choice: either it retains the log until the follower recovers and catches up (at the risk of running out of disk space on the leader), or it deletes the log that the unavailable follower has not yet acknowledged (in which case the follower won't be able to recover from the log, and will have to be restored from a backup when it comes back).
+**Log retention dilemma:**
+- Leader deletes log after all followers confirm
+- Long-unavailable follower creates a choice:
+  - ❌ Retain log indefinitely → risk running out of disk
+  - ❌ Delete unacknowledged log → follower can't recover, needs backup restore
 
 #### Leader failure: Failover
 
-Handling a failure of the leader is trickier: one of the followers needs to be promoted to be the new leader, clients need to be reconfigured to send their writes to the new leader, and the other followers need to start consuming data changes from the new leader. This process is called **failover**.
+**Failover** = handling leader failure:
+- Promote a follower to new leader
+- Reconfigure clients to write to new leader
+- Other followers consume from new leader
 
 <ProcessFlow
   steps={[
@@ -306,7 +419,9 @@ Handling a failure of the leader is trickier: one of the followers needs to be p
   ]}
 />
 
-Failover can happen manually (an administrator is notified that the leader has failed and takes the necessary steps to make a new leader) or automatically. An automatic failover process usually consists of the following steps:
+**Failover types:**
+- **Manual:** Administrator notified, takes steps to make new leader
+- **Automatic:** System handles failover (steps below)
 
 1. **Determining that the leader has failed.** There are many things that could potentially go wrong: crashes, power outages, network issues, and more. There is no foolproof way of detecting what has gone wrong, so most systems simply use a timeout: nodes frequently bounce messages back and forth between each other, and if a node doesn't respond for some period of time—say, 30 seconds—it is assumed to be dead. (If the leader is deliberately taken down for planned maintenance, this doesn't apply.)
 
@@ -350,23 +465,45 @@ Failover can happen manually (an administrator is notified that the leader has f
   ]}
 />
 
-- If asynchronous replication is used, the new leader may not have received all the writes from the old leader before it failed. If the former leader rejoins the cluster after a new leader has been chosen, what should happen to those writes? The new leader may have received conflicting writes in the meantime. The most common solution is for the old leader's unreplicated writes to simply be discarded, which means that writes you believed to be committed actually weren't durable after all.
+**Detailed failure scenarios:**
 
-- Discarding writes is especially dangerous if other storage systems outside of the database need to be coordinated with the database contents. For example, in one incident at GitHub, an out-of-date MySQL follower was promoted to leader. The database used an autoincrementing counter to assign primary keys to new rows, but because the new leader's counter lagged behind the old leader's, it reused some primary keys that were previously assigned by the old leader. These primary keys were also used in a Redis store, so the reuse of primary keys resulted in inconsistency between MySQL and Redis, which caused some private data to be disclosed to the wrong users.
+**1. Unreplicated writes with async replication:**
+- New leader missing writes from old leader
+- Old leader rejoins → what happens to those writes?
+- Common solution: discard old leader's unreplicated writes
+- Problem: writes you thought were durable actually weren't
 
-- In certain fault scenarios (see Chapter 9), it could happen that two nodes both believe that they are the leader. This situation is called **split brain**, and it is dangerous: if both leaders accept writes, and there is no process for resolving conflicts (see "Multi-Leader Replication"), data is likely to be lost or corrupted. As a safety catch, some systems have a mechanism to shut down one node if two leaders are detected. However, if this mechanism is not carefully designed, you can end up with both nodes being shut down. Moreover, there is a risk that by the time the split brain is detected and the old node is shut down, it is already too late and data has already been corrupted.
+**2. External system coordination (GitHub incident):**
+- Out-of-date MySQL follower promoted to leader
+- Autoincrement counter lagged → reused primary keys
+- Those keys also in Redis → MySQL/Redis inconsistency
+- Result: private data disclosed to wrong users
 
-- What is the right timeout before the leader is declared dead? A longer timeout means a longer time to recovery in the case where the leader fails. However, if the timeout is too short, there could be unnecessary failovers. For example, a temporary load spike could cause a node's response time to increase above the timeout, or a network glitch could cause delayed packets. If the system is already struggling with high load or network problems, an unnecessary failover is likely to make the situation worse, not better.
+**3. Split brain:**
+- Two nodes both believe they're leader
+- Both accept writes → data loss/corruption without conflict resolution
+- Safety mechanisms can shut down one node, but:
+  - Poorly designed → both nodes shut down
+  - Detection too slow → corruption already happened
+
+**4. Timeout tuning:**
+- Long timeout → slow recovery
+- Short timeout → unnecessary failovers
+- Load spikes or network glitches can trigger false failovers
+- Unnecessary failover during load → makes problems worse
 
 :::note
 Guarding against split brain by limiting or shutting down old leaders is known as **fencing** or, more emphatically, **Shoot The Other Node In The Head (STONITH)**. We will discuss fencing in more detail in "Distributed Locks and Leases".
 :::
 
-There are no easy solutions to these problems. For this reason, some operations teams prefer to perform failovers manually, even if the software supports automatic failover.
+**Practical advice:**
+- No easy solutions → some teams prefer manual failover despite automatic support
+- **Key priority:** Pick the most up-to-date follower as new leader
+  - Sync/semi-sync: follower that leader waited for before ACK
+  - Async: follower with greatest log sequence number
+- Data loss trade-off: fraction of a second = tolerable; days behind = catastrophic
 
-The most important thing with failover is to pick an up-to-date follower as the new leader—if synchronous or semi-synchronous replication is used, this would be the follower that the old leader waited for before acknowledging writes. With asynchronous replication, you can pick the follower with the greatest log sequence number. This minimizes the amount of data that is lost during failover: losing a fraction of a second of writes may be tolerable, but picking a follower that is behind by several days could be catastrophic.
-
-These issues—node failures; unreliable networks; and trade-offs around replica consistency, durability, availability, and latency—are in fact fundamental problems in distributed systems. In Chapter 9 and Chapter 10 we will discuss them in greater depth.
+**Looking ahead:** These issues (node failures, unreliable networks, consistency/durability/availability/latency trade-offs) are fundamental distributed systems problems → Chapter 9 and 10
 
 ### 1.5. Implementation of Replication Logs
 
