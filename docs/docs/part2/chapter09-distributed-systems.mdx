@@ -40,27 +40,58 @@ import { DiagramContainer, Row, Column, Box, Arrow, ProcessFlow, CardGrid, Group
 
 ## 1. Introduction
 
-**In plain English:** Building a program on a single computer is like cooking alone in your kitchen—you control everything, and if something goes wrong, you know exactly what happened. Building a distributed system is like coordinating a meal across multiple kitchens in different cities—communication takes time, some messages might get lost, and you can never be entirely sure what's happening elsewhere.
+**In plain English:**
+- Building on a single computer is like cooking alone in your kitchen
+- You control everything; if something goes wrong, you know what happened
+- Distributed systems are like coordinating a meal across multiple kitchens in different cities
+- Communication takes time, messages might get lost
+- You can never be entirely sure what's happening elsewhere
 
-**In technical terms:** Distributed systems are fundamentally different from single-node systems because they introduce partial failures—situations where some components fail while others continue working. There's no shared memory, no global clock, and no way to know the true state of the system at any given moment.
+**In technical terms:**
+- Distributed systems introduce **partial failures**—some components fail while others continue
+- No shared memory
+- No global clock
+- No way to know the true state of the system at any given moment
 
-**Why it matters:** Understanding what can go wrong in distributed systems helps you design software that remains reliable despite network failures, clock skew, and process pauses. These aren't theoretical edge cases—they happen regularly in production systems.
+**Why it matters:**
+- Understanding what can go wrong helps you design reliable software
+- Network failures, clock skew, and process pauses aren't theoretical edge cases
+- They happen regularly in production systems
 
-As discussed in "Reliability and Fault Tolerance", making a system reliable means ensuring that the system as a whole continues working, even when things go wrong (i.e., when there is a fault). However, anticipating all the possible faults and handling them is not that easy. As a developer, it is very tempting to focus mostly on the happy path (after all, most of the time things work fine!) and to neglect faults, since they introduce a lot of edge cases.
-
-If you want your system to be reliable in the presence of faults you have to radically change your mindset, and focus on the things that could go wrong, even though they may be unlikely. It doesn't matter whether there is only a one-in-a-million chance of a thing going wrong: in a large enough system, one-in-a-million events happen every day. Experienced systems operators will tell you that anything that can go wrong will go wrong.
+**The mindset shift required:**
+- Making a system reliable means it continues working even when things go wrong
+- It's tempting to focus on the happy path—after all, most of the time things work
+- But in a large system, one-in-a-million events happen every day
+- Experienced operators know: **anything that can go wrong will go wrong**
 
 > **💡 Insight**
 >
-> The defining characteristic of distributed systems is **partial failure**—some parts of the system fail while others continue working. On a single machine, failures are typically total (the whole system crashes). In distributed systems, you must design for the messy middle ground where you can't determine what succeeded and what failed.
+> The defining characteristic of distributed systems is **partial failure**:
+>
+> - Some parts fail while others continue working
+> - On a single machine, failures are typically total (the whole system crashes)
+> - In distributed systems, you must design for the messy middle ground
+> - You can't determine what succeeded and what failed
 
 ### 1.1. Faults and Partial Failures
 
-**In plain English:** When your laptop crashes, everything stops—you get a blue screen or kernel panic, and nothing works until you reboot. But in a distributed system, one server might crash while three others keep running. Or the network between two servers might fail while everything else works fine. These "partial failures" are much harder to reason about.
+**In plain English:**
+- When your laptop crashes, everything stops (blue screen or kernel panic)
+- Nothing works until you reboot
+- But in a distributed system, one server might crash while three others keep running
+- Or the network between two servers might fail while everything else works fine
+- These "partial failures" are much harder to reason about
 
-**In technical terms:** On a single computer, operations are deterministic—the same operation always produces the same result. Hardware faults typically cause total failures. But in distributed systems, nondeterministic partial failures are the norm: you try to do something involving multiple nodes, and it may sometimes work and sometimes unpredictably fail.
+**In technical terms:**
+- On a single computer, operations are deterministic (same operation → same result)
+- Hardware faults typically cause total failures
+- In distributed systems, **nondeterministic partial failures are the norm**
+- You try something involving multiple nodes—it may sometimes work, sometimes fail
 
-**Why it matters:** Traditional debugging techniques don't work well with partial failures. You can't just add logging and reproduce the issue, because the failure might depend on rare timing conditions or network behavior that's hard to recreate.
+**Why it matters:**
+- Traditional debugging techniques don't work well with partial failures
+- You can't just add logging and reproduce the issue
+- Failure might depend on rare timing conditions or network behavior
 
 <DiagramContainer title="Single Node vs. Distributed System Failures">
   <Row gap="lg">
@@ -90,29 +121,50 @@ If you want your system to be reliable in the presence of faults you have to rad
   </Row>
 </DiagramContainer>
 
-When you are writing a program on a single computer, it normally behaves in a fairly predictable way: either it works or it doesn't. There is no fundamental reason why software on a single computer should be flaky: when the hardware is working correctly, the same operation always produces the same result (it is deterministic).
+**Single computer vs. distributed system:**
 
-This is a deliberate choice in the design of computers: if an internal fault occurs, we prefer a computer to crash completely rather than returning a wrong result, because wrong results are difficult and confusing to deal with. Thus, computers hide the fuzzy physical reality on which they are implemented and present an idealized system model that operates with mathematical perfection.
+| Aspect | Single Computer | Distributed System |
+|--------|----------------|--------------------|
+| **Behavior** | Predictable: works or doesn't | Nondeterministic partial failures |
+| **Failure mode** | Total crash (by design) | Some parts broken, others fine |
+| **Reproducibility** | Same operation → same result | Same operation → sometimes works, sometimes fails |
 
-In a distributed system, there may well be some parts of the system that are broken in some unpredictable way, even though other parts of the system are working fine. This is known as a **partial failure**. The difficulty is that partial failures are nondeterministic: if you try to do anything involving multiple nodes and the network, it may sometimes work and sometimes unpredictably fail.
-
-This nondeterminism and possibility of partial failures is what makes distributed systems hard to work with. On the other hand, if a distributed system can tolerate partial failures, that opens up powerful possibilities: for example, it allows you to perform a rolling upgrade, rebooting one node at a time to install software updates while the system as a whole continues working uninterrupted all the time.
+**The trade-off:**
+- Nondeterminism makes distributed systems hard to work with
+- But tolerating partial failures opens powerful possibilities:
+  - Rolling upgrades (one node at a time)
+  - Continuous availability during maintenance
 
 ---
 
 ## 2. Unreliable Networks
 
-**In plain English:** Think of network communication like sending mail through the postal service. You drop a letter in the mailbox, but you have no guarantee when (or if) it will arrive. The postal truck might break down, the letter might get lost, or it might sit in a sorting facility for days. The only way to know if it arrived is if the recipient sends you a reply—which itself might get lost.
+**In plain English:**
+- Think of network communication like sending mail through the postal service
+- You drop a letter in the mailbox, but no guarantee when (or if) it will arrive
+- The postal truck might break down, letter might get lost, or sit in sorting for days
+- The only way to know if it arrived is if the recipient sends a reply
+- But that reply might also get lost!
 
-**In technical terms:** Most distributed systems use asynchronous packet networks where messages can be lost, delayed arbitrarily, or delivered out of order. The sender cannot determine whether a message was received unless the recipient explicitly responds—and that response might also be lost or delayed.
+**In technical terms:**
+- Most distributed systems use **asynchronous packet networks**
+- Messages can be lost, delayed arbitrarily, or delivered out of order
+- The sender cannot determine whether a message was received
+- Unless the recipient explicitly responds—and that response might be lost too
 
-**Why it matters:** Every network operation can fail, and you can't distinguish between "the request was lost," "the server crashed," and "the response was delayed." Your code must handle all these scenarios correctly.
+**Why it matters:**
+- Every network operation can fail
+- You can't distinguish "request lost" from "server crashed" from "response delayed"
+- Your code must handle all these scenarios correctly
 
-As discussed in "Shared-Memory, Shared-Disk, and Shared-Nothing Architecture", the distributed systems we focus on in this book are mostly shared-nothing systems: a bunch of machines connected by a network. The network is the only way those machines can communicate.
+**Key constraint:** The network is the only way machines can communicate—there's no shared memory.
 
 ### 2.1. Network Failure Scenarios
 
-The internet and most internal networks in datacenters are asynchronous packet networks. In this kind of network, one node can send a message (a packet) to another node, but the network gives no guarantees as to when it will arrive, or whether it will arrive at all.
+**Asynchronous packet networks (internet, datacenter networks):**
+- One node can send a message (packet) to another node
+- Network gives no guarantees as to when it will arrive
+- Or whether it will arrive at all
 
 <DiagramContainer title="Network Failure Scenarios">
   <Column gap="lg">
@@ -153,23 +205,45 @@ If you send a request and expect a response, many things could go wrong:
 
 > **💡 Insight**
 >
-> From the sender's perspective, all network failures look identical: **no response**. You cannot distinguish between "request lost," "server crashed," and "response delayed by 5 minutes." This fundamental uncertainty shapes how we must design distributed systems—we can't rely on definitive knowledge about remote state.
+> From the sender's perspective, all network failures look identical: **no response**.
+>
+> - You cannot distinguish "request lost" from "server crashed" from "response delayed by 5 minutes"
+> - This fundamental uncertainty shapes how we must design distributed systems
+> - We can't rely on definitive knowledge about remote state
 
-The sender can't even tell whether the packet was delivered: the only option is for the recipient to send a response message, which may in turn be lost or delayed. These issues are indistinguishable in an asynchronous network: the only information you have is that you haven't received a response yet.
-
-The usual way of handling this issue is a **timeout**: after some time you give up waiting and assume that the response is not going to arrive. However, when a timeout occurs, you still don't know whether the remote node got your request or not.
+**The only option:**
+- Recipient must send a response (which itself might be lost or delayed)
+- All failure scenarios are indistinguishable: you just haven't received a response
+- Usual handling: **timeout**—give up waiting and assume response won't arrive
+- But even with timeout, you don't know if the remote node got your request
 
 ### 2.2. The Limitations of TCP
 
-**In plain English:** TCP is like a postal service with package tracking and redelivery. If a package gets lost, the service automatically sends another one. But there's a catch: the tracking only tells you when the package reaches the recipient's mailbox, not when they actually open and read it. And if the postal service gives up after too many failed attempts, you're back to the same problem—not knowing what happened.
+**In plain English:**
+- TCP is like a postal service with package tracking and redelivery
+- If a package gets lost, the service automatically sends another one
+- But the catch: tracking only tells you when it reaches the recipient's mailbox
+- Not when they actually open and read it
+- If the postal service gives up after too many failed attempts, you're back to square one
 
-**In technical terms:** TCP provides reliability at the network layer by detecting and retransmitting dropped packets, reordering out-of-sequence packets, and checking data integrity with checksums. However, TCP can only guarantee delivery to the operating system's network stack, not to the application itself. If TCP times out, you still don't know if your data was processed.
+**In technical terms:**
+- TCP provides reliability at the network layer:
+  - Detects and retransmits dropped packets
+  - Reorders out-of-sequence packets
+  - Checks data integrity with checksums
+- But TCP can only guarantee delivery to the OS network stack
+- Not to the application itself
+- If TCP times out, you still don't know if your data was processed
 
-**Why it matters:** Many developers assume TCP makes the network "reliable," but TCP can't solve application-level reliability problems. You still need timeouts, retries, and idempotence at the application layer.
+**Why it matters:**
+- Many developers assume TCP makes the network "reliable"
+- But TCP can't solve application-level reliability problems
+- You still need timeouts, retries, and idempotence at the application layer
 
-Network packets have a maximum size (generally a few kilobytes), but many applications need to send messages that are too big to fit in one packet. These applications most often use TCP, the Transmission Control Protocol, to establish a connection that breaks up large data streams into individual packets, and puts them back together again on the receiving side.
-
-TCP is often described as providing "reliable" delivery, in the sense that it detects and retransmits dropped packets, it detects reordered packets and puts them back in the correct order, and it detects packet corruption using a simple checksum. It also implements congestion control, flow control, and backpressure.
+**What TCP does provide:**
+- Breaks large messages into packets
+- Reassembles them on receiving side
+- Congestion control, flow control, backpressure
 
 <DiagramContainer title="TCP Connection Lifecycle">
   <ProcessFlow
@@ -204,19 +278,35 @@ TCP is often described as providing "reliable" delivery, in the sense that it de
   />
 </DiagramContainer>
 
-So, if TCP provides "reliability", does that mean we no longer need to worry about networks being unreliable? Unfortunately not. TCP decides that a packet must have been lost if no acknowledgment arrives within some timeout, but TCP can't tell whether it was the outbound packet or the acknowledgment that was lost. If the network cable is unplugged, TCP can't plug it back in for you.
-
-If a TCP connection is closed with an error, you unfortunately have no way of knowing how much data was actually processed by the remote node. Even if TCP acknowledged that a packet was delivered, this only means that the operating system kernel on the remote node received it, but the application may have crashed before it handled that data.
+**TCP's limitations:**
+- TCP decides a packet was lost if no ACK arrives within timeout
+- But can't tell whether outbound packet or ACK was lost
+- If network cable is unplugged, TCP can't plug it back in
+- If connection closes with error, you don't know how much data was processed
+- Even if TCP ACKed the packet, that only means the OS kernel received it
+- The application may have crashed before handling that data
 
 ### 2.3. Network Faults in Practice
 
-**In plain English:** You might think that in a modern datacenter, with carefully managed equipment and redundant connections, network problems would be rare. In reality, they happen all the time. Squirrels chew through cables, construction crews cut fiber lines, misconfigured switches create routing loops, and software upgrades temporarily disrupt connectivity.
+**In plain English:**
+- You might think modern datacenters with redundant connections would be reliable
+- In reality, network problems happen all the time
+- Squirrels chew through cables, construction crews cut fiber lines
+- Misconfigured switches create routing loops
+- Software upgrades temporarily disrupt connectivity
 
-**In technical terms:** Empirical studies show that network faults occur regularly even in well-managed datacenters, with rates of about 12 faults per month in a medium-sized datacenter. Human error (misconfiguration) is a major contributor that redundant hardware doesn't protect against.
+**In technical terms:**
+- Empirical studies show network faults occur regularly even in well-managed datacenters
+- About 12 faults per month in a medium-sized datacenter
+- Human error (misconfiguration) is a major contributor
+- Redundant hardware doesn't protect against configuration mistakes
 
-**Why it matters:** Network faults aren't theoretical corner cases—they're operational realities you must design for. Systems that don't handle network partitions gracefully will experience outages and data corruption in production.
+**Why it matters:**
+- Network faults aren't theoretical corner cases—they're operational realities
+- Systems that don't handle network partitions gracefully will experience outages
+- And potentially data corruption in production
 
-We have been building computer networks for decades—one might hope that by now we would have figured out how to make them reliable. Unfortunately, we have not yet succeeded. There are some systematic studies, and plenty of anecdotal evidence, showing that network problems can be surprisingly common, even in controlled environments like a datacenter:
+**Decades of networking, and still unreliable:**
 
 - One study in a medium-sized datacenter found about **12 network faults per month**, of which half disconnected a single machine, and half disconnected an entire rack
 - Interruptions of wide-area fiber links have been blamed on cows, beavers, and sharks (though shark bites have become rarer due to better shielding of submarine cables)
@@ -226,24 +316,50 @@ We have been building computer networks for decades—one might hope that by now
 
 > **💡 Insight**
 >
-> **Network partitions** (netsplit) occur when one part of the network is cut off from the rest. This is particularly dangerous because nodes on different sides of the partition can both believe they are the primary, leading to split brain scenarios. The CAP theorem (Consistency, Availability, Partition tolerance) fundamentally derives from the impossibility of reliably detecting network partitions.
+> **Network partitions** (netsplit) occur when one part of the network is cut off from the rest:
+>
+> - Particularly dangerous: nodes on different sides can both believe they are primary
+> - Leads to **split brain** scenarios
+> - The CAP theorem derives from the impossibility of reliably detecting partitions
 
-Even if network faults are rare in your environment, the fact that faults can occur means that your software needs to be able to handle them. If the error handling of network faults is not defined and tested, arbitrarily bad things could happen: the cluster could become deadlocked and permanently unable to serve requests, or it could even delete all of your data.
+**Bottom line:**
+- Even if faults are rare, your software must handle them
+- If error handling isn't defined and tested, arbitrarily bad things could happen:
+  - Cluster could become deadlocked
+  - Permanently unable to serve requests
+  - Could even delete all your data
 
 ### 2.4. Detecting Faults
 
-**In plain English:** Imagine you're trying to call a friend. If you hear a busy signal, you know they're on another call. If you hear "this number is not in service," you know the number is wrong. But if the call just rings and rings with no answer, you're stuck—maybe they're ignoring you, maybe their phone is off, or maybe they're in an area with no signal. Detecting faults in distributed systems has the same ambiguity.
+**In plain English:**
+- Imagine calling a friend
+- Busy signal → you know they're on another call
+- "Number not in service" → you know the number is wrong
+- But if it just rings and rings with no answer, you're stuck
+- Maybe they're ignoring you, phone is off, or no signal
+- Detecting faults in distributed systems has the same ambiguity
 
-**In technical terms:** Fault detection in distributed systems relies on timeouts because most failures don't generate explicit error signals. However, timeouts cannot distinguish between network failures, slow nodes, and actually crashed nodes. Some systems get explicit feedback (TCP RST packets, ICMP Destination Unreachable), but these are the exception rather than the rule.
+**In technical terms:**
+- Fault detection relies on timeouts (most failures don't generate explicit error signals)
+- Timeouts cannot distinguish between:
+  - Network failures
+  - Slow nodes
+  - Actually crashed nodes
+- Some systems get explicit feedback (TCP RST, ICMP Destination Unreachable)
+- But these are the exception, not the rule
 
-**Why it matters:** False positives in fault detection (declaring a live node dead) can be as harmful as false negatives (failing to detect a dead node). Choosing appropriate timeout values requires balancing detection speed against the risk of premature declarations.
+**Why it matters:**
+- False positives (declaring a live node dead) can be as harmful as false negatives
+- Choosing timeout values requires balancing detection speed vs. risk of premature declarations
 
-Many systems need to automatically detect faulty nodes. For example:
+**Systems that need automatic fault detection:**
 
 - A load balancer needs to stop sending requests to a node that is dead
 - In a distributed database with single-leader replication, if the leader fails, one of the followers needs to be promoted to be the new leader
 
-Unfortunately, the uncertainty about the network makes it difficult to tell whether a node is working or not. In some specific circumstances you might get some feedback to explicitly tell you that something is not working:
+**The challenge:** Network uncertainty makes it difficult to tell whether a node is working.
+
+**Sometimes you get explicit feedback:**
 
 <CardGrid
   columns={2}
@@ -273,19 +389,36 @@ Unfortunately, the uncertainty about the network makes it difficult to tell whet
   ]}
 />
 
-Rapid feedback about a remote node being down is useful, but you can't count on it. In general you have to assume that you will get no response at all. You can retry a few times, wait for a timeout to elapse, and eventually declare the node dead if you don't hear back within the timeout.
+**General approach:**
+- Rapid feedback is useful but can't be counted on
+- Assume you will get no response at all
+- Retry a few times, wait for timeout to elapse
+- Eventually declare the node dead if no response within timeout
 
 ### 2.5. Timeouts and Unbounded Delays
 
-**In plain English:** Setting a timeout is like deciding how long to wait for a friend who's late to lunch. Wait too long, and you waste your time. Give up too quickly, and they might show up just after you leave. In distributed systems, this trade-off is complicated by the fact that delays are unpredictable—sometimes a response takes milliseconds, sometimes minutes.
+**In plain English:**
+- Setting a timeout is like deciding how long to wait for a friend who's late to lunch
+- Wait too long → waste your time
+- Give up too quickly → they might show up just after you leave
+- In distributed systems, delays are unpredictable (milliseconds to minutes)
 
-**In technical terms:** Asynchronous networks have unbounded delays—there is no upper limit on how long a packet might take to arrive. This makes it impossible to choose a "correct" timeout value. Short timeouts detect faults faster but risk false positives; long timeouts reduce false positives but delay fault detection.
+**In technical terms:**
+- Asynchronous networks have **unbounded delays**
+- No upper limit on how long a packet might take to arrive
+- Impossible to choose a "correct" timeout value
+- Short timeouts: detect faults faster, but risk false positives
+- Long timeouts: fewer false positives, but delay fault detection
 
-**Why it matters:** Prematurely declaring a node dead can cause cascading failures if you transfer its responsibilities to already-overloaded nodes. Conversely, long timeouts delay recovery from genuine failures. Systems must experimentally determine appropriate timeouts based on observed latency distributions.
+**Why it matters:**
+- Prematurely declaring a node dead can cause **cascading failures**
+- (Transfer responsibilities to already-overloaded nodes)
+- Long timeouts delay recovery from genuine failures
+- Systems must experimentally determine appropriate timeouts
 
-If a timeout is the only sure way of detecting a fault, then how long should the timeout be? There is unfortunately no simple answer.
-
-A long timeout means a long wait until a node is declared dead (and during this time, users may have to wait or see error messages). A short timeout detects faults faster, but carries a higher risk of incorrectly declaring a node dead when in fact it has only suffered a temporary slowdown.
+**The timeout dilemma:**
+- Long timeout → long wait until node declared dead (users see errors)
+- Short timeout → faster detection, but risk of incorrectly declaring a slow node dead
 
 <DiagramContainer title="Timeout Trade-offs">
   <Row gap="lg">
@@ -315,25 +448,56 @@ A long timeout means a long wait until a node is declared dead (and during this 
   </Row>
 </DiagramContainer>
 
-Prematurely declaring a node dead is problematic: if the node is actually alive and in the middle of performing some action (for example, sending an email), and another node takes over, the action may end up being performed twice.
+**Why premature declarations are problematic:**
+- If the node is actually alive and performing an action (e.g., sending an email)
+- And another node takes over
+- The action may end up being performed twice
 
-Imagine a fictitious system with a network that guaranteed a maximum delay for packets—every packet is either delivered within some time **d**, or it is lost. Furthermore, assume that a non-failed node always handles a request within some time **r**. In this case, you could guarantee that every successful request receives a response within time **2d + r**—and if you don't receive a response within that time, you know that either the network or the remote node is not working.
+**Hypothetical bounded delay system:**
+- If network guaranteed max delay **d** (packet delivered or lost within time d)
+- And non-failed node handles requests within time **r**
+- Then every successful request receives response within **2d + r**
+- No response in that time → network or node is down
 
-Unfortunately, most systems we work with have neither of those guarantees: **asynchronous networks have unbounded delays**, and most server implementations cannot guarantee that they can handle requests within some maximum time.
+**Reality:**
+- Most systems have neither of those guarantees
+- **Asynchronous networks have unbounded delays**
+- Servers cannot guarantee handling requests within max time
 
 > **💡 Insight**
 >
-> Systems can use **adaptive timeouts** that learn from observed response times. The Phi Accrual failure detector (used in Akka and Cassandra) maintains a sliding window of response times and calculates a suspicion level rather than a binary alive/dead status. This provides more nuanced failure detection than fixed timeouts.
+> Systems can use **adaptive timeouts** that learn from observed response times:
+>
+> - The Phi Accrual failure detector (used in Akka and Cassandra)
+> - Maintains a sliding window of response times
+> - Calculates a suspicion level rather than binary alive/dead
+> - Provides more nuanced failure detection than fixed timeouts
 
 ### 2.6. Network Congestion and Queueing
 
-**In plain English:** Think of network delays like traffic congestion on highways. Most of the time traffic flows smoothly, but during rush hour, a normally 20-minute drive might take an hour. The problem isn't that cars are moving slower—it's that they're waiting in queues at every intersection. Networks work the same way: packets spend most of their time waiting in queues, not traveling across wires.
+**In plain English:**
+- Think of network delays like traffic congestion on highways
+- Most of the time traffic flows smoothly
+- But during rush hour, a 20-minute drive might take an hour
+- The problem isn't that cars are moving slower
+- It's that they're waiting in queues at every intersection
+- Networks work the same way: packets spend most time in queues, not traveling
 
-**In technical terms:** Variable network delays are primarily caused by queueing at multiple points: switch queues when multiple senders target the same destination, OS queues when CPU cores are busy, hypervisor queues in virtualized environments, and TCP send queues due to congestion control. These queues can build up quickly under load, causing delays that vary by orders of magnitude.
+**In technical terms:**
+- Variable network delays are primarily caused by queueing:
+  - Switch queues when multiple senders target same destination
+  - OS queues when CPU cores are busy
+  - Hypervisor queues in virtualized environments
+  - TCP send queues due to congestion control
+- These queues can build up quickly under load
+- Delays can vary by orders of magnitude
 
-**Why it matters:** In a heavily utilized system, queueing delays dominate transmission times. A packet that normally takes 1ms to deliver might take 100ms or more when queues fill up. This variability makes timeout selection especially challenging in shared multi-tenant environments.
+**Why it matters:**
+- In a heavily utilized system, queueing delays dominate transmission times
+- A packet that normally takes 1ms might take 100ms+ when queues fill up
+- This variability makes timeout selection especially challenging in multi-tenant environments
 
-When driving a car, travel times on road networks often vary most due to traffic congestion. Similarly, the variability of packet delays on computer networks is most often due to queueing:
+**Queueing points in the network:**
 
 <DiagramContainer title="Sources of Queueing Delay">
   <StackDiagram
@@ -375,25 +539,54 @@ Specific queueing scenarios:
 
 > **💡 Insight**
 >
-> In public clouds and multitenant datacenters, you share resources with other customers (the "noisy neighbor" problem). A customer near you using lots of bandwidth can dramatically increase your queueing delays, and you have no visibility into or control over this. This is why timeout values that work in a private datacenter might be too aggressive in a cloud environment.
+> In public clouds and multitenant datacenters, you share resources with other customers:
+>
+> - The "noisy neighbor" problem
+> - A customer near you using lots of bandwidth can dramatically increase your delays
+> - You have no visibility into or control over this
+> - Timeout values that work in a private datacenter might be too aggressive in the cloud
 
-All of these factors contribute to the variability of network delays. Queueing delays have an especially wide range when a system is close to its maximum capacity: a system with plenty of spare capacity can easily drain queues, whereas in a highly utilized system, long queues can build up very quickly.
+**The capacity factor:**
+- System with spare capacity can easily drain queues
+- Highly utilized system → long queues build up quickly
 
-In such environments, you can only choose timeouts experimentally: measure the distribution of network round-trip times over an extended period, and over many machines, to determine the expected variability of delays. Then, taking into account your application's characteristics, you can determine an appropriate trade-off between failure detection delay and risk of premature timeouts.
+**How to choose timeouts:**
+- Can only be determined experimentally
+- Measure RTT distribution over extended period, across many machines
+- Take into account your application's characteristics
+- Balance failure detection delay vs. risk of premature timeouts
 
-Even better, rather than using configured constant timeouts, systems can continually measure response times and their variability (jitter), and automatically adjust timeouts according to the observed response time distribution.
+**Better approach:** Use adaptive timeouts
+- Continually measure response times and their variability (jitter)
+- Automatically adjust timeouts based on observed distribution
 
 ### 2.7. Synchronous vs. Asynchronous Networks
 
-**In plain English:** Traditional telephone networks are like trains running on a fixed schedule—when you make a call, the network reserves a dedicated "track" (bandwidth) for your conversation from start to finish. Internet networks are like buses that share the road—packets jostle with each other for space, which is more efficient but less predictable.
+**In plain English:**
+- Traditional telephone networks are like trains running on a fixed schedule
+- When you make a call, the network reserves a dedicated "track" (bandwidth)
+- Internet networks are like buses that share the road
+- Packets jostle with each other for space—more efficient but less predictable
 
-**In technical terms:** Telephone networks use circuit switching, which allocates fixed bandwidth for the duration of a connection, providing bounded latency. IP networks use packet switching, which opportunistically uses whatever bandwidth is available, leading to better utilization but unbounded delays due to queueing.
+**In technical terms:**
+- **Telephone networks** use circuit switching
+  - Fixed bandwidth allocated for duration of connection
+  - Provides bounded latency
+- **IP networks** use packet switching
+  - Opportunistically uses whatever bandwidth is available
+  - Better utilization but unbounded delays due to queueing
 
-**Why it matters:** You might wonder why we don't just build networks with bounded delays like telephone systems. The answer is economic: packet switching provides much better resource utilization for bursty data traffic. Circuit switching would waste bandwidth and make data transfers unnecessarily slow.
+**Why it matters:**
+- Why don't we build networks with bounded delays like telephone systems?
+- Answer: **economics**—packet switching provides much better resource utilization
+- For bursty data traffic, circuit switching would waste bandwidth
+- And make data transfers unnecessarily slow
 
-Distributed systems would be a lot simpler if we could rely on the network to deliver packets with some fixed maximum delay, and not to drop packets. Why can't we solve this at the hardware level and make the network reliable so that the software doesn't need to worry about it?
-
-When you make a call over the telephone network, it establishes a **circuit**: a fixed, guaranteed amount of bandwidth is allocated for the call, along the entire route between the two callers. This circuit remains in place until the call ends. For example, an ISDN network runs at a fixed rate of 4,000 frames per second. When a call is established, it is allocated 16 bits of space within each frame (in each direction).
+**How circuit switching works:**
+- Telephone call establishes a **circuit**
+- Fixed, guaranteed bandwidth allocated along the entire route
+- Circuit remains in place until call ends
+- Example: ISDN runs at 4,000 frames/second, 16 bits per frame allocated per call
 
 <DiagramContainer title="Circuit Switching vs. Packet Switching">
   <Row gap="lg">
@@ -417,27 +610,58 @@ When you make a call over the telephone network, it establishes a **circuit**: a
   </Row>
 </DiagramContainer>
 
-This kind of network is **synchronous**: even as data passes through several routers, it does not suffer from queueing, because the 16 bits of space for the call have already been reserved in the next hop of the network. And because there is no queueing, the maximum end-to-end latency of the network is fixed. We call this a **bounded delay**.
+**Synchronous networks:**
+- Data passes through routers without suffering from queueing
+- Because bandwidth is already reserved at each hop
+- Maximum end-to-end latency is fixed → **bounded delay**
 
-Why do datacenter networks and the internet use packet switching? The answer is that they are optimized for **bursty traffic**. A circuit is good for an audio or video call, which needs to transfer a fairly constant number of bits per second for the duration of the call. On the other hand, requesting a web page, sending an email, or transferring a file doesn't have any particular bandwidth requirement—we just want it to complete as quickly as possible.
+**Why datacenter/internet use packet switching:**
+- Optimized for **bursty traffic**
+- Audio/video calls need constant bits per second → circuits work well
+- But web pages, emails, file transfers don't have bandwidth requirements
+- We just want them to complete as quickly as possible
 
-If you wanted to transfer a file over a circuit, you would have to guess a bandwidth allocation. If you guess too low, the transfer is unnecessarily slow, leaving network capacity unused. If you guess too high, the circuit cannot be set up. Thus, using circuits for bursty data transfers wastes network capacity and makes transfers unnecessarily slow. By contrast, TCP dynamically adapts the rate of data transfer to the available network capacity.
+**The problem with circuits for data:**
+- Would have to guess bandwidth allocation
+- Guess too low → transfer unnecessarily slow, wasted capacity
+- Guess too high → circuit cannot be set up
+- TCP dynamically adapts to available capacity → much better for bursty traffic
 
 > **💡 Insight**
 >
-> Variable delays in networks are not a law of nature, but simply the result of a cost/benefit trade-off. We could build networks with bounded delays using circuit switching or quality of service (QoS) mechanisms, but it would be significantly more expensive and provide lower utilization. Most non-safety-critical systems choose cheap and unreliable over expensive and reliable.
+> Variable delays in networks are not a law of nature:
+>
+> - Simply the result of a cost/benefit trade-off
+> - We could build networks with bounded delays (circuit switching, QoS)
+> - But it would be significantly more expensive and provide lower utilization
+> - Most non-safety-critical systems choose **cheap and unreliable over expensive and reliable**
 
 ---
 
 ## 3. Unreliable Clocks
 
-**In plain English:** Imagine two friends trying to meet up, but their watches show different times. One arrives at 3:00 PM according to their watch, the other at 3:00 PM according to theirs, but they're actually 10 minutes apart. In distributed systems, every computer has its own clock, and they're all slightly different—some run faster, some slower. This makes it surprisingly difficult to determine the order in which events happened.
+**In plain English:**
+- Imagine two friends trying to meet up, but their watches show different times
+- One arrives at 3:00 PM their time, the other at 3:00 PM their time
+- But they're actually 10 minutes apart
+- In distributed systems, every computer has its own clock
+- They're all slightly different—some run faster, some slower
+- This makes it surprisingly difficult to determine the order of events
 
-**In technical terms:** Clocks in distributed systems serve two purposes: measuring durations (timeouts, latencies) and determining points in time (timestamps, cache expiry). Physical clocks drift from the true time, and synchronization via NTP is imperfect. This unreliability makes clocks unsuitable for ordering events across nodes without additional mechanisms.
+**In technical terms:**
+- Clocks serve two purposes:
+  - Measuring durations (timeouts, latencies)
+  - Determining points in time (timestamps, cache expiry)
+- Physical clocks drift from the true time
+- Synchronization via NTP is imperfect
+- This makes clocks unsuitable for ordering events across nodes without additional mechanisms
 
-**Why it matters:** Relying on unsynchronized clocks can cause data corruption, including lost updates in databases using last-write-wins conflict resolution. Understanding clock behavior is essential for building correct distributed systems.
+**Why it matters:**
+- Relying on unsynchronized clocks can cause data corruption
+- Including lost updates in databases using last-write-wins
+- Understanding clock behavior is essential for building correct distributed systems
 
-Clocks and time are important. Applications depend on clocks in various ways:
+**Applications depend on clocks for:**
 
 - Has this request timed out yet?
 - What's the 99th percentile response time of this service?
@@ -445,19 +669,36 @@ Clocks and time are important. Applications depend on clocks in various ways:
 - When does this cache entry expire?
 - What is the timestamp on this error message in the log file?
 
-In a distributed system, time is a tricky business, because communication is not instantaneous: it takes time for a message to travel across the network from one machine to another. The time when a message is received is always later than the time when it is sent, but due to variable delays in the network, we don't know how much later.
-
-Moreover, each machine on the network has its own clock, which is an actual hardware device: usually a quartz crystal oscillator. These devices are not perfectly accurate, so each machine has its own notion of time, which may be slightly faster or slower than on other machines.
+**The challenges of time in distributed systems:**
+- Communication is not instantaneous (message travel time)
+- Message received is always later than sent, but we don't know how much later
+- Each machine has its own clock (quartz crystal oscillator)
+- These devices are not perfectly accurate
+- Each machine has its own notion of time (may be faster or slower than others)
 
 ### 3.1. Monotonic vs. Time-of-Day Clocks
 
-**In plain English:** Computers have two types of clocks, like a wall clock and a stopwatch. The wall clock tells you "it's 3:00 PM" and can jump backward if someone adjusts it. The stopwatch only measures duration—how much time has passed—and always moves forward. Never use the wall clock to measure how long something took, and never use the stopwatch to know what time it is.
+**In plain English:**
+- Computers have two types of clocks, like a wall clock and a stopwatch
+- **Wall clock** (time-of-day): tells you "it's 3:00 PM" but can jump backward
+- **Stopwatch** (monotonic): only measures duration, always moves forward
+- Never use the wall clock to measure how long something took
+- Never use the stopwatch to know what time it is
 
-**In technical terms:** Time-of-day clocks return the current date/time according to some calendar (wall-clock time) and can jump backward due to NTP corrections or leap seconds. Monotonic clocks only measure elapsed time and are guaranteed to always move forward, though NTP may adjust their rate (slewing).
+**In technical terms:**
+- **Time-of-day clocks**: return current date/time (wall-clock time)
+  - Can jump backward due to NTP corrections or leap seconds
+- **Monotonic clocks**: measure elapsed time only
+  - Guaranteed to always move forward
+  - NTP may adjust their rate (slewing) but won't jump
 
-**Why it matters:** Using a time-of-day clock for measuring durations can cause negative elapsed times or timeouts that never expire. Use monotonic clocks for measuring elapsed time (timeouts, latencies) and time-of-day clocks only when you need the actual calendar time.
+**Why it matters:**
+- Using time-of-day for durations can cause negative elapsed times
+- Or timeouts that never expire
+- Use monotonic for elapsed time (timeouts, latencies)
+- Use time-of-day only when you need actual calendar time
 
-Modern computers have at least two different kinds of clocks: a **time-of-day clock** and a **monotonic clock**. Although they both measure time, it is important to distinguish the two, since they serve different purposes.
+**Key distinction:** Both measure time, but serve different purposes.
 
 <CardGrid
   columns={2}
